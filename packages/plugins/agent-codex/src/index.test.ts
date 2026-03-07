@@ -213,24 +213,20 @@ describe("getLaunchCommand", () => {
     expect(agent.getLaunchCommand(makeLaunchConfig())).toBe("'codex'");
   });
 
-  it("includes --dangerously-bypass-approvals-and-sandbox when permissions=skip", () => {
+  it("omits approval flags when permissions=skip", () => {
     const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "skip" }));
-    expect(cmd).toContain("--dangerously-bypass-approvals-and-sandbox");
+    expect(cmd).not.toContain("--dangerously-bypass-approvals-and-sandbox");
+    expect(cmd).not.toContain("--ask-for-approval");
     expect(cmd).not.toContain("--full-auto");
   });
 
   it("includes --ask-for-approval never when permissions=auto-edit", () => {
-    // Cast needed: "auto-edit" not yet in AgentLaunchConfig type union
-    const cmd = agent.getLaunchCommand(
-      makeLaunchConfig({ permissions: "auto-edit" as AgentLaunchConfig["permissions"] }),
-    );
+    const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "auto-edit" }));
     expect(cmd).toContain("--ask-for-approval never");
   });
 
   it("includes --ask-for-approval untrusted when permissions=suggest", () => {
-    const cmd = agent.getLaunchCommand(
-      makeLaunchConfig({ permissions: "suggest" as AgentLaunchConfig["permissions"] }),
-    );
+    const cmd = agent.getLaunchCommand(makeLaunchConfig({ permissions: "suggest" }));
     expect(cmd).toContain("--ask-for-approval untrusted");
   });
 
@@ -255,7 +251,7 @@ describe("getLaunchCommand", () => {
     const cmd = agent.getLaunchCommand(
       makeLaunchConfig({ permissions: "skip", model: "o3", prompt: "Go" }),
     );
-    expect(cmd).toBe("'codex' --dangerously-bypass-approvals-and-sandbox --model 'o3' -c model_reasoning_effort=high -- 'Go'");
+    expect(cmd).toBe("'codex' --model 'o3' -c model_reasoning_effort=high -- 'Go'");
   });
 
   it("escapes single quotes in prompt (POSIX shell escaping)", () => {
@@ -965,7 +961,7 @@ describe("getRestoreCommand", () => {
     expect(cmd).toContain("thread-abc-123");
   });
 
-  it("includes --dangerously-bypass-approvals-and-sandbox from project config", async () => {
+  it("omits approval flags when project config permissions=skip", async () => {
     const content = jsonl(
       { type: "session_meta", cwd: "/workspace/test", model: "gpt-4o" },
       { threadId: "thread-1" },
@@ -981,7 +977,8 @@ describe("getRestoreCommand", () => {
       agentConfig: { permissions: "skip" },
     }));
 
-    expect(cmd).toContain("--dangerously-bypass-approvals-and-sandbox");
+    expect(cmd).not.toContain("--dangerously-bypass-approvals-and-sandbox");
+    expect(cmd).not.toContain("--ask-for-approval");
   });
 
   it("includes --ask-for-approval never from project config", async () => {

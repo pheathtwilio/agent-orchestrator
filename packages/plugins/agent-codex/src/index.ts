@@ -516,9 +516,7 @@ export async function resolveCodexBinary(): Promise<string> {
 
 /** Append approval-policy flags to a command parts array */
 function appendApprovalFlags(parts: string[], permissions: string | undefined): void {
-  if (permissions === "skip") {
-    parts.push("--dangerously-bypass-approvals-and-sandbox");
-  } else if (permissions === "auto-edit") {
+  if (permissions === "auto-edit") {
     parts.push("--ask-for-approval", "never");
   } else if (permissions === "suggest") {
     parts.push("--ask-for-approval", "untrusted");

@@ -329,7 +329,7 @@ export interface AgentLaunchConfig {
   projectConfig: ProjectConfig;
   issueId?: string;
   prompt?: string;
-  permissions?: "skip" | "default";
+  permissions?: "skip" | "default" | "auto-edit" | "suggest";
   model?: string;
   /**
    * System prompt to pass to the agent for orchestrator context.
@@ -922,7 +922,7 @@ export interface NotifierConfig {
 }
 
 export interface AgentSpecificConfig {
-  permissions?: "skip" | "default";
+  permissions?: "skip" | "default" | "auto-edit" | "suggest";
   model?: string;
   [key: string]: unknown;
 }
