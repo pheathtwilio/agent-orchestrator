@@ -765,7 +765,6 @@ describe("stop command", () => {
       purgeOpenCode: false,
     });
   });
-
   it("passes purge flag when stopping orchestrator with --purge-session", async () => {
     mockConfigRef.current = makeConfig({ "my-app": makeProject() });
     mockSessionManager.get.mockResolvedValue({ id: "app-orchestrator", status: "running" });

@@ -538,6 +538,14 @@ export function registerStop(program: Command): void {
             console.error(chalk.red("\nError:"), String(err));
           }
           process.exit(1);
+=======
+        if (existing) {
+          const spinner = ora("Stopping orchestrator session").start();
+          await sm.kill(sessionId, { purgeOpenCode: opts?.purgeSession === true });
+          spinner.succeed("Orchestrator session stopped");
+        } else {
+          console.log(chalk.yellow(`Orchestrator session "${sessionId}" is not running`));
+>>>>>>> 6b3d09a (feat: add purge option to orchestrator stop)
         }
       },
     );
