@@ -4,9 +4,12 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { createSessionManager } from "../session-manager.js";
-import { createImprovementService } from "../improvement.js";
+import {
+  createImprovementService,
+  type ImprovementLinkage,
+  type NormalizedFeedbackReport,
+} from "../improvement.js";
 import { getSessionsDir } from "../paths.js";
-import type { ImprovementLinkage, NormalizedFeedbackReport } from "../improvement.js";
 import type {
   Agent,
   OrchestratorConfig,
