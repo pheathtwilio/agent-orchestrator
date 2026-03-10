@@ -126,6 +126,19 @@ describe("feedback dedupe key", () => {
 
     expect(keyA).not.toBe(keyB);
   });
+
+  it("does not collide when one evidence item contains pipes", () => {
+    const keyA = generateFeedbackDedupeKey(FEEDBACK_TOOL_NAMES.BUG_REPORT, {
+      ...validPayload,
+      evidence: ["a|b"],
+    });
+    const keyB = generateFeedbackDedupeKey(FEEDBACK_TOOL_NAMES.BUG_REPORT, {
+      ...validPayload,
+      evidence: ["a", "b"],
+    });
+
+    expect(keyA).not.toBe(keyB);
+  });
 });
 
 describe("feedback report store", () => {

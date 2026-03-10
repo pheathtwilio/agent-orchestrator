@@ -1,15 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  readdirSync,
-  renameSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import { atomicWriteFileSync } from "./atomic-write.js";
 import { parseKeyValueContent } from "./key-value.js";
 
 export const FEEDBACK_TOOL_NAMES = {
@@ -85,15 +78,15 @@ export function generateFeedbackDedupeKey(
   const canonicalEvidence = [...input.evidence]
     .map((item) => normalizeText(item).toLowerCase())
     .sort();
-  const canonical = [
+  const canonical = JSON.stringify({
     tool,
-    normalizeText(input.title).toLowerCase(),
-    normalizeText(input.body).toLowerCase(),
-    normalizeText(input.session).toLowerCase(),
-    normalizeText(input.source).toLowerCase(),
-    input.confidence.toFixed(4),
-    ...canonicalEvidence,
-  ].join("|");
+    title: normalizeText(input.title).toLowerCase(),
+    body: normalizeText(input.body).toLowerCase(),
+    session: normalizeText(input.session).toLowerCase(),
+    source: normalizeText(input.source).toLowerCase(),
+    confidence: input.confidence.toFixed(4),
+    evidence: canonicalEvidence,
+  });
 
   return createHash("sha256").update(canonical).digest("hex").slice(0, 16);
 }
@@ -155,12 +148,6 @@ function parseReportFile(content: string): PersistedFeedbackReport {
     dedupeKey: DedupeKeySchema.parse(raw["dedupeKey"] ?? ""),
     ...parsedInput,
   };
-}
-
-function atomicWriteFileSync(filePath: string, content: string): void {
-  const tmpPath = `${filePath}.tmp.${process.pid}.${Date.now()}`;
-  writeFileSync(tmpPath, content, "utf-8");
-  renameSync(tmpPath, filePath);
 }
 
 function isReportFileName(fileName: string): boolean {

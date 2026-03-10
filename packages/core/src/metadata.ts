@@ -22,7 +22,6 @@
 import {
   readFileSync,
   writeFileSync,
-  renameSync,
   existsSync,
   mkdirSync,
   unlinkSync,
@@ -34,6 +33,7 @@ import {
 } from "node:fs";
 import { join, dirname } from "node:path";
 import type { SessionId, SessionMetadata } from "./types.js";
+import { atomicWriteFileSync } from "./atomic-write.js";
 import { parseKeyValueContent } from "./key-value.js";
 
 /** Serialize a record back to key=value format. */
@@ -44,16 +44,6 @@ function serializeMetadata(data: Record<string, string>): string {
       .map(([k, v]) => `${k}=${v}`)
       .join("\n") + "\n"
   );
-}
-
-/**
- * Atomically write a file by writing to a temp file then renaming.
- * rename() is atomic on POSIX, so concurrent writers never produce torn data.
- */
-function atomicWriteFileSync(filePath: string, content: string): void {
-  const tmpPath = `${filePath}.tmp.${process.pid}.${Date.now()}`;
-  writeFileSync(tmpPath, content, "utf-8");
-  renameSync(tmpPath, filePath);
 }
 
 /** Validate sessionId to prevent path traversal. */
