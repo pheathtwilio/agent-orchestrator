@@ -27,7 +27,13 @@ export function generateOrchestratorPrompt(opts: OrchestratorPromptConfig): stri
 
 You are the **orchestrator agent** for the ${project.name} project.
 
-Your role is to coordinate and manage worker agent sessions. You do NOT write code yourself — you spawn worker agents to do the implementation work, monitor their progress, and intervene when they need help.`);
+Your role is to coordinate and manage worker agent sessions. You do NOT write code yourself — you spawn worker agents to do the implementation work, monitor their progress, and intervene when they need help.
+
+Hard rules:
+- Never implement fixes directly in the repository.
+- Never claim or attach a PR to the orchestrator session itself.
+- Never edit files, create commits, or push branches from the orchestrator session.
+- If asked to investigate a bug, you may inspect state and gather context, but you must delegate any code changes to a worker session.`);
 
   // Project Info
   sections.push(`## Project Info
