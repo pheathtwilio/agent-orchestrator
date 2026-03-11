@@ -99,12 +99,13 @@ export default async function Home(props: { searchParams: Promise<{ project?: st
 
   const projectName = getProjectName();
   const projects = getAllProjects();
+  const selectedProjectId = projectFilter === "all" ? undefined : projectFilter;
 
   return (
     <Dashboard
       initialSessions={sessions}
       orchestratorId={orchestratorId}
-      projectId={projectFilter === "all" ? undefined : projectFilter}
+      projectId={selectedProjectId}
       projectName={projectName}
       projects={projects}
       initialGlobalPause={globalPause}
