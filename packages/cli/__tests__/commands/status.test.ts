@@ -521,6 +521,83 @@ describe("status command", () => {
     expect(parsed[0].pendingThreads).toBe(0);
   });
 
+  it("never attributes PR ownership to orchestrator sessions", async () => {
+    const orchestratorSession: Session = {
+      id: "app-orchestrator",
+      projectId: "my-app",
+      status: "working",
+      activity: null,
+      branch: "feat/orchestrator-drift",
+      issueId: null,
+      pr: {
+        number: 415,
+        url: "https://github.com/org/repo/pull/415",
+        title: "Stale orchestrator PR",
+        owner: "org",
+        repo: "repo",
+        branch: "feat/orchestrator-drift",
+        baseBranch: "main",
+        isDraft: false,
+      },
+      workspacePath: "/tmp/orchestrator",
+      runtimeHandle: { id: "app-orchestrator", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {
+        role: "orchestrator",
+        pr: "https://github.com/org/repo/pull/415",
+      },
+    };
+
+    const workerSession: Session = {
+      id: "app-21",
+      projectId: "my-app",
+      status: "pr_open",
+      activity: null,
+      branch: "feat/worker-pr",
+      issueId: null,
+      pr: null,
+      workspacePath: "/tmp/worker",
+      runtimeHandle: { id: "app-21", runtimeName: "tmux", data: {} },
+      agentInfo: null,
+      createdAt: new Date(),
+      lastActivityAt: new Date(),
+      metadata: {},
+    };
+
+    mockSessionManager.list.mockResolvedValue([orchestratorSession, workerSession]);
+    mockGit.mockImplementation(async (_args: string[], workspacePath?: string) => {
+      if (workspacePath === "/tmp/orchestrator") return "feat/orchestrator-drift";
+      if (workspacePath === "/tmp/worker") return "feat/worker-pr";
+      return "main";
+    });
+    mockDetectPR.mockResolvedValue({
+      number: 10,
+      url: "https://github.com/org/repo/pull/10",
+      title: "Worker PR",
+      owner: "org",
+      repo: "repo",
+      branch: "feat/worker-pr",
+      baseBranch: "main",
+      isDraft: false,
+    });
+    mockGetCISummary.mockResolvedValue("passing");
+    mockGetReviewDecision.mockResolvedValue("pending");
+    mockGetPendingComments.mockResolvedValue([]);
+
+    await program.parseAsync(["node", "test", "status", "--json"]);
+
+    const jsonCalls = consoleSpy.mock.calls.map((c) => c[0]).join("");
+    const parsed = JSON.parse(jsonCalls);
+    expect(parsed).toHaveLength(2);
+    expect(
+      parsed.find((entry: { name: string }) => entry.name === "app-orchestrator")?.prNumber,
+    ).toBeNull();
+    expect(parsed.find((entry: { name: string }) => entry.name === "app-21")?.prNumber).toBe(10);
+    expect(mockDetectPR).toHaveBeenCalledTimes(1);
+  });
+
   it("falls back to PR number from metadata URL when SCM fails", async () => {
     writeFileSync(
       join(sessionsDir, "app-1"),

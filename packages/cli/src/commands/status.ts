@@ -40,16 +40,21 @@ interface SessionInfo {
   activity: ActivityState | null;
 }
 
+function isOrchestratorSession(session: Session): boolean {
+  return session.metadata["role"] === "orchestrator" || session.id.endsWith("-orchestrator");
+}
+
 async function gatherSessionInfo(
   session: Session,
   agent: Agent,
   scm: SCM,
   projectConfig: ReturnType<typeof loadConfig>,
 ): Promise<SessionInfo> {
+  const orchestratorSession = isOrchestratorSession(session);
   let branch = session.branch;
   const status = session.status;
   const summary = session.metadata["summary"] ?? null;
-  const prUrl = session.metadata["pr"] ?? null;
+  const prUrl = orchestratorSession ? null : (session.metadata["pr"] ?? null);
   const issue = session.issueId;
 
   // Get live branch from worktree if available
@@ -89,7 +94,7 @@ async function gatherSessionInfo(
     }
   }
 
-  if (branch) {
+  if (!orchestratorSession && branch) {
     try {
       const project = projectConfig.projects[session.projectId];
       if (project) {
