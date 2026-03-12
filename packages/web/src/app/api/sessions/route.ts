@@ -1,4 +1,4 @@
-import { ACTIVITY_STATE } from "@composio/ao-core";
+import { ACTIVITY_STATE, isOrchestratorSession } from "@composio/ao-core";
 import { getServices, getSCM } from "@/lib/services";
 import {
   sessionToDashboard,
@@ -9,6 +9,8 @@ import {
   listDashboardOrchestrators,
 } from "@/lib/serialize";
 import { getCorrelationId, jsonWithCorrelation, recordApiObservation } from "@/lib/observability";
+import { resolveGlobalPause } from "@/lib/global-pause";
+import { filterProjectSessions } from "@/lib/project-utils";
 
 const METADATA_ENRICH_TIMEOUT_MS = 3_000;
 const PR_ENRICH_TIMEOUT_MS = 4_000;
@@ -29,15 +31,12 @@ async function settlesWithin(promise: Promise<unknown>, timeoutMs: number): Prom
   }
 }
 
-/** GET /api/sessions — List all sessions with full state
- * Query params:
- * - active=true: Only return non-exited sessions
- */
 export async function GET(request: Request) {
   const correlationId = getCorrelationId(request);
   const startedAt = Date.now();
   try {
     const { searchParams } = new URL(request.url);
+    const projectFilter = searchParams.get("project");
     const activeOnly = searchParams.get("active") === "true";
 
     const { config, registry, sessionManager } = await getServices();
@@ -51,12 +50,7 @@ export async function GET(request: Request) {
     const orchestrators = listDashboardOrchestrators(visibleSessions, config.projects);
     const orchestratorId = orchestrators.length === 1 ? (orchestrators[0]?.id ?? null) : null;
 
-    // Find orchestrator session ID (if running) and expose to clients
-    const orchSession = coreSessions.find((s) => s.id.endsWith("-orchestrator"));
-    const orchestratorId = orchSession ? orchSession.id : null;
-
-    // Filter out orchestrator sessions — they get their own button, not a card
-    let workerSessions = coreSessions.filter((s) => !s.id.endsWith("-orchestrator"));
+    let workerSessions = visibleSessions.filter((session) => !isOrchestratorSession(session));
 
     // Convert to dashboard format
     let dashboardSessions = workerSessions.map(sessionToDashboard);
@@ -110,6 +104,8 @@ export async function GET(request: Request) {
         sessions: dashboardSessions,
         stats: computeStats(dashboardSessions),
         orchestratorId,
+        orchestrators,
+        globalPause: resolveGlobalPause(allSessions),
       },
       { status: 200 },
       correlationId,
