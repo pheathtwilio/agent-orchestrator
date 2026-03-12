@@ -3,6 +3,9 @@
 import { useEffect, useReducer, useRef } from "react";
 import type { DashboardSession, GlobalPauseState, SSESnapshotEvent } from "@/lib/types";
 
+const MEMBERSHIP_REFRESH_DELAY_MS = 120;
+const STALE_REFRESH_INTERVAL_MS = 15000;
+
 interface State {
   sessions: DashboardSession[];
   globalPause: GlobalPauseState | null;
@@ -42,6 +45,15 @@ function reducer(state: State, action: Action): State {
   }
 }
 
+function createMembershipKey(
+  sessions: Array<Pick<DashboardSession, "id">> | SSESnapshotEvent["sessions"],
+): string {
+  return sessions
+    .map((session) => session.id)
+    .sort()
+    .join("\u0000");
+}
+
 export function useSessionEvents(
   initialSessions: DashboardSession[],
   initialGlobalPause?: GlobalPauseState | null,
@@ -53,6 +65,9 @@ export function useSessionEvents(
   });
   const sessionsRef = useRef(state.sessions);
   const refreshingRef = useRef(false);
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingMembershipKeyRef = useRef<string | null>(null);
+  const lastRefreshAtRef = useRef(Date.now());
 
   useEffect(() => {
     sessionsRef.current = state.sessions;
@@ -66,6 +81,55 @@ export function useSessionEvents(
     const url = project ? `/api/events?project=${encodeURIComponent(project)}` : "/api/events";
     const es = new EventSource(url);
 
+    const clearRefreshTimer = () => {
+      if (refreshTimerRef.current) {
+        clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+    };
+
+    const scheduleRefresh = () => {
+      if (refreshingRef.current || refreshTimerRef.current) return;
+      refreshTimerRef.current = setTimeout(() => {
+        refreshTimerRef.current = null;
+        refreshingRef.current = true;
+        const requestedMembershipKey = pendingMembershipKeyRef.current;
+
+        const sessionsUrl = project
+          ? `/api/sessions?project=${encodeURIComponent(project)}`
+          : "/api/sessions";
+
+        void fetch(sessionsUrl)
+          .then((res) => (res.ok ? res.json() : null))
+          .then(
+            (updated: { sessions?: DashboardSession[]; globalPause?: GlobalPauseState } | null) => {
+              if (!updated?.sessions) return;
+
+              lastRefreshAtRef.current = Date.now();
+              dispatch({
+                type: "reset",
+                sessions: updated.sessions,
+                globalPause: updated.globalPause ?? null,
+              });
+            },
+          )
+          .catch(() => undefined)
+          .finally(() => {
+            refreshingRef.current = false;
+
+            if (
+              pendingMembershipKeyRef.current !== null &&
+              pendingMembershipKeyRef.current !== requestedMembershipKey
+            ) {
+              scheduleRefresh();
+              return;
+            }
+
+            pendingMembershipKeyRef.current = null;
+          });
+      }, MEMBERSHIP_REFRESH_DELAY_MS);
+    };
+
     es.onmessage = (event: MessageEvent) => {
       try {
         const data = JSON.parse(event.data as string) as { type: string };
@@ -73,36 +137,17 @@ export function useSessionEvents(
           const snapshot = data as SSESnapshotEvent;
           dispatch({ type: "snapshot", patches: snapshot.sessions });
 
-          const currentIds = new Set(sessionsRef.current.map((s) => s.id));
-          const snapshotIds = new Set(snapshot.sessions.map((s) => s.id));
-          const sameMembership =
-            currentIds.size === snapshotIds.size &&
-            [...snapshotIds].every((id) => currentIds.has(id));
+          const currentMembershipKey = createMembershipKey(sessionsRef.current);
+          const snapshotMembershipKey = createMembershipKey(snapshot.sessions);
 
-          if (!sameMembership && !refreshingRef.current) {
-            refreshingRef.current = true;
-            const sessionsUrl = project
-              ? `/api/sessions?project=${encodeURIComponent(project)}`
-              : "/api/sessions";
-            void fetch(sessionsUrl)
-              .then((res) => (res.ok ? res.json() : null))
-              .then(
-                (
-                  updated: { sessions?: DashboardSession[]; globalPause?: GlobalPauseState } | null,
-                ) => {
-                  if (updated?.sessions) {
-                    dispatch({
-                      type: "reset",
-                      sessions: updated.sessions,
-                      globalPause: updated.globalPause ?? null,
-                    });
-                  }
-                },
-              )
-              .catch(() => undefined)
-              .finally(() => {
-                refreshingRef.current = false;
-              });
+          if (currentMembershipKey !== snapshotMembershipKey) {
+            pendingMembershipKeyRef.current = snapshotMembershipKey;
+            scheduleRefresh();
+            return;
+          }
+
+          if (Date.now() - lastRefreshAtRef.current >= STALE_REFRESH_INTERVAL_MS) {
+            scheduleRefresh();
           }
         }
       } catch {
@@ -113,6 +158,7 @@ export function useSessionEvents(
     es.onerror = () => undefined;
 
     return () => {
+      clearRefreshTimer();
       es.close();
     };
   }, [project]);
