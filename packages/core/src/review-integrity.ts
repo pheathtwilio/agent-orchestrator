@@ -418,7 +418,7 @@ export function evaluateMergeGuard(input: MergeGuardInput): MergeGuardEvaluation
       blockers.push({
         code: "REQUIRED_CHECK_MISSING",
         checkName: requiredCheck,
-        message: `Required check \"${requiredCheck}\" is missing`,
+        message: `Required check "${requiredCheck}" is missing`,
       });
       continue;
     }
@@ -426,7 +426,7 @@ export function evaluateMergeGuard(input: MergeGuardInput): MergeGuardEvaluation
       blockers.push({
         code: "REQUIRED_CHECK_NOT_PASSING",
         checkName: requiredCheck,
-        message: `Required check \"${requiredCheck}\" is ${status}`,
+        message: `Required check "${requiredCheck}" is ${status}`,
       });
     }
   }

@@ -170,20 +170,6 @@ export async function validateResolutionWithGit(
     getCommitTimestamp: (sha) => gitTimestamps.get(sha) ?? null,
   });
 
-  if (workspacePath && record.fixCommitSha) {
-    const reachable = gitReachable.get(record.fixCommitSha) ?? false;
-    if (!reachable) blockers.push("fixCommitSha is not reachable from PR head");
-
-    if (record.resolutionType === "already_fixed") {
-      const commitTs = gitTimestamps.get(record.fixCommitSha) ?? null;
-      if (!commitTs) {
-        blockers.push("already_fixed commit timestamp could not be determined");
-      } else if (commitTs.getTime() > record.createdAt.getTime()) {
-        blockers.push("already_fixed commit must predate resolution action");
-      }
-    }
-  }
-
   return [...new Set(blockers)];
 }
 
