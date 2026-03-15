@@ -64,6 +64,47 @@ export function create(config?: Record<string, unknown>): Workspace {
 
       mkdirSync(projectWorktreeDir, { recursive: true });
 
+      // Prune stale worktree entries (e.g. from previous failed spawns)
+      try {
+        await git(repoPath, "worktree", "prune");
+      } catch {
+        // Best effort
+      }
+
+      // If the worktree path already exists but is not a valid git worktree,
+      // it's orphaned from a previous failed spawn — clean it up
+      if (existsSync(worktreePath)) {
+        let isValidWorktree = false;
+        try {
+          await execFileAsync("git", ["rev-parse", "--is-inside-work-tree"], {
+            cwd: worktreePath,
+            timeout: GIT_TIMEOUT,
+          });
+          isValidWorktree = true;
+        } catch {
+          // Not a valid worktree
+        }
+
+        if (!isValidWorktree) {
+          // Orphaned directory — remove it so we can create a fresh worktree
+          rmSync(worktreePath, { recursive: true, force: true });
+        } else {
+          // Valid worktree already exists at this path — remove it properly
+          // so we can recreate from the latest base
+          try {
+            await git(repoPath, "worktree", "remove", "--force", worktreePath);
+          } catch {
+            rmSync(worktreePath, { recursive: true, force: true });
+            // Prune again after manual removal
+            try {
+              await git(repoPath, "worktree", "prune");
+            } catch {
+              // Best effort
+            }
+          }
+        }
+      }
+
       // Fetch latest from remote
       try {
         await git(repoPath, "fetch", "origin", "--quiet");
@@ -77,29 +118,75 @@ export function create(config?: Record<string, unknown>): Workspace {
       try {
         await git(repoPath, "worktree", "add", "-b", cfg.branch, worktreePath, baseRef);
       } catch (err: unknown) {
-        // Only retry if the error is "branch already exists"
         const msg = err instanceof Error ? err.message : String(err);
         if (!msg.includes("already exists")) {
           throw new Error(`Failed to create worktree for branch "${cfg.branch}": ${msg}`, {
             cause: err,
           });
         }
-        // Branch already exists — create worktree and check it out
-        await git(repoPath, "worktree", "add", worktreePath, baseRef);
+        // Branch already exists from a previous failed spawn — reuse it.
+        // Check if the branch is checked out in another worktree
+        let branchWorktreePath: string | undefined;
         try {
-          await git(worktreePath, "checkout", cfg.branch);
-        } catch (checkoutErr: unknown) {
-          // Checkout failed — remove the orphaned worktree before rethrowing
-          try {
-            await git(repoPath, "worktree", "remove", "--force", worktreePath);
-          } catch {
-            // Best-effort cleanup
+          const worktreeList = await git(repoPath, "worktree", "list", "--porcelain");
+          const blocks = worktreeList.split("\n\n");
+          for (const block of blocks) {
+            const lines = block.trim().split("\n");
+            let wtPath = "";
+            let wtBranch = "";
+            for (const line of lines) {
+              if (line.startsWith("worktree ")) wtPath = line.slice("worktree ".length);
+              if (line.startsWith("branch "))
+                wtBranch = line.slice("branch ".length).replace("refs/heads/", "");
+            }
+            if (wtBranch === cfg.branch && wtPath !== repoPath) {
+              branchWorktreePath = wtPath;
+              break;
+            }
           }
-          const checkoutMsg =
-            checkoutErr instanceof Error ? checkoutErr.message : String(checkoutErr);
-          throw new Error(`Failed to checkout branch "${cfg.branch}" in worktree: ${checkoutMsg}`, {
-            cause: checkoutErr,
-          });
+        } catch {
+          // Best effort — proceed without worktree check
+        }
+
+        // If branch is checked out in a stale worktree, remove that worktree first
+        if (branchWorktreePath) {
+          try {
+            await git(repoPath, "worktree", "remove", "--force", branchWorktreePath);
+          } catch {
+            // Try manual cleanup
+            if (existsSync(branchWorktreePath)) {
+              rmSync(branchWorktreePath, { recursive: true, force: true });
+            }
+            try {
+              await git(repoPath, "worktree", "prune");
+            } catch {
+              // Best effort
+            }
+          }
+        }
+
+        // Now try creating worktree on the existing branch
+        try {
+          await git(repoPath, "worktree", "add", worktreePath, cfg.branch);
+        } catch {
+          // Last resort: create on base ref and checkout
+          await git(repoPath, "worktree", "add", worktreePath, baseRef);
+          try {
+            await git(worktreePath, "checkout", cfg.branch);
+          } catch (checkoutErr: unknown) {
+            // Checkout failed — remove the orphaned worktree before rethrowing
+            try {
+              await git(repoPath, "worktree", "remove", "--force", worktreePath);
+            } catch {
+              // Best-effort cleanup
+            }
+            const checkoutMsg =
+              checkoutErr instanceof Error ? checkoutErr.message : String(checkoutErr);
+            throw new Error(
+              `Failed to checkout branch "${cfg.branch}" in worktree: ${checkoutMsg}`,
+              { cause: checkoutErr },
+            );
+          }
         }
       }
 

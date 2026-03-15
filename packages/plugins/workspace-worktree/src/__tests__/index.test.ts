@@ -81,6 +81,17 @@ function makeCreateConfig(overrides?: Partial<WorkspaceCreateConfig>): Workspace
   };
 }
 
+/**
+ * Mock the pre-create phase (prune + orphan check + fetch) for a clean create.
+ * Order: worktree prune → existsSync(worktreePath) → fetch
+ * Call this before setting up the worktree add mock.
+ */
+function mockCleanPreCreate() {
+  mockGitSuccess(""); // worktree prune
+  mockExistsSync.mockReturnValueOnce(false); // worktreePath does not exist
+  mockGitSuccess(""); // fetch
+}
+
 // ---------------------------------------------------------------------------
 // Reset mocks before each test
 // ---------------------------------------------------------------------------
@@ -106,8 +117,7 @@ describe("create() factory", () => {
   it("uses ~/.worktrees as default base dir", async () => {
     const ws = create();
 
-    // Mock: fetch, worktree add
-    mockGitSuccess(""); // fetch
+    mockCleanPreCreate();
     mockGitSuccess(""); // worktree add
 
     const info = await ws.create(makeCreateConfig());
@@ -118,6 +128,8 @@ describe("create() factory", () => {
   it("uses custom worktreeDir from config", async () => {
     const ws = create({ worktreeDir: "/custom/worktrees" });
 
+    mockGitSuccess(""); // worktree prune
+    mockExistsSync.mockReturnValueOnce(false); // worktreePath check
     mockGitSuccess(""); // fetch
     mockGitSuccess(""); // worktree add
 
@@ -129,6 +141,8 @@ describe("create() factory", () => {
   it("expands tilde in custom worktreeDir", async () => {
     const ws = create({ worktreeDir: "~/custom-path" });
 
+    mockGitSuccess(""); // worktree prune
+    mockExistsSync.mockReturnValueOnce(false); // worktreePath check
     mockGitSuccess(""); // fetch
     mockGitSuccess(""); // worktree add
 
@@ -139,20 +153,25 @@ describe("create() factory", () => {
 });
 
 describe("workspace.create()", () => {
-  it("calls git fetch and git worktree add with correct args", async () => {
+  it("calls git worktree prune, fetch, and worktree add with correct args", async () => {
     const ws = create();
 
-    mockGitSuccess(""); // fetch
+    mockCleanPreCreate();
     mockGitSuccess(""); // worktree add
 
     await ws.create(makeCreateConfig());
 
-    // First call: git fetch origin --quiet
+    // First call: git worktree prune
+    expect(mockExecFileAsync).toHaveBeenCalledWith("git", ["worktree", "prune"], {
+      cwd: "/repo/path",
+    });
+
+    // Second call: git fetch origin --quiet
     expect(mockExecFileAsync).toHaveBeenCalledWith("git", ["fetch", "origin", "--quiet"], {
       cwd: "/repo/path",
     });
 
-    // Second call: git worktree add -b <branch> <path> <baseRef>
+    // Third call: git worktree add -b <branch> <path> <baseRef>
     expect(mockExecFileAsync).toHaveBeenCalledWith(
       "git",
       [
@@ -170,7 +189,7 @@ describe("workspace.create()", () => {
   it("creates the project worktree directory", async () => {
     const ws = create();
 
-    mockGitSuccess(""); // fetch
+    mockCleanPreCreate();
     mockGitSuccess(""); // worktree add
 
     await ws.create(makeCreateConfig());
@@ -183,6 +202,8 @@ describe("workspace.create()", () => {
   it("continues when fetch fails (offline)", async () => {
     const ws = create();
 
+    mockGitSuccess(""); // worktree prune
+    mockExistsSync.mockReturnValueOnce(false); // worktreePath check
     mockGitError("Could not resolve host"); // fetch fails
     mockGitSuccess(""); // worktree add succeeds
 
@@ -191,37 +212,113 @@ describe("workspace.create()", () => {
     expect(info.path).toBe("/mock-home/.worktrees/myproject/session-1");
   });
 
-  it("handles branch already exists by adding worktree then checking out", async () => {
+  it("cleans up orphaned directory before creating worktree", async () => {
     const ws = create();
 
+    mockGitSuccess(""); // worktree prune
+    mockExistsSync.mockReturnValueOnce(true); // worktreePath exists
+    // git rev-parse --is-inside-work-tree fails → not a valid worktree
+    mockExecFileAsync.mockRejectedValueOnce(new Error("not a git repository"));
+
     mockGitSuccess(""); // fetch
-    mockGitError("already exists"); // worktree add -b fails
-    mockGitSuccess(""); // worktree add (without -b)
-    mockGitSuccess(""); // checkout
+    mockGitSuccess(""); // worktree add
 
     const info = await ws.create(makeCreateConfig());
 
-    // Third call: worktree add without -b
+    // Orphaned directory should be removed
+    expect(mockRmSync).toHaveBeenCalledWith("/mock-home/.worktrees/myproject/session-1", {
+      recursive: true,
+      force: true,
+    });
+    expect(info.path).toBe("/mock-home/.worktrees/myproject/session-1");
+  });
+
+  it("removes existing valid worktree before creating fresh one", async () => {
+    const ws = create();
+
+    mockGitSuccess(""); // worktree prune
+    mockExistsSync.mockReturnValueOnce(true); // worktreePath exists
+    // git rev-parse succeeds → valid worktree
+    mockExecFileAsync.mockResolvedValueOnce({ stdout: "true\n", stderr: "" });
+
+    mockGitSuccess(""); // worktree remove --force (existing worktree)
+    mockGitSuccess(""); // fetch
+    mockGitSuccess(""); // worktree add
+
+    const info = await ws.create(makeCreateConfig());
+
+    expect(info.path).toBe("/mock-home/.worktrees/myproject/session-1");
+  });
+
+  it("handles branch already exists by reusing existing branch", async () => {
+    const ws = create();
+
+    mockCleanPreCreate();
+    mockGitError("already exists"); // worktree add -b fails
+    // worktree list for branch check — no other worktree has this branch
+    mockGitSuccess("worktree /repo/path\nHEAD abc\nbranch refs/heads/main");
+    mockGitSuccess(""); // worktree add on existing branch
+
+    const info = await ws.create(makeCreateConfig());
+
+    // Should try to add worktree on existing branch
     expect(mockExecFileAsync).toHaveBeenCalledWith(
       "git",
-      ["worktree", "add", "/mock-home/.worktrees/myproject/session-1", "origin/main"],
+      ["worktree", "add", "/mock-home/.worktrees/myproject/session-1", "feat/TEST-1"],
       { cwd: "/repo/path" },
     );
-
-    // Fourth call: checkout
-    expect(mockExecFileAsync).toHaveBeenCalledWith("git", ["checkout", "feat/TEST-1"], {
-      cwd: "/mock-home/.worktrees/myproject/session-1",
-    });
 
     expect(info.branch).toBe("feat/TEST-1");
   });
 
-  it("cleans up worktree on checkout failure", async () => {
+  it("handles branch checked out in stale worktree", async () => {
     const ws = create();
 
-    mockGitSuccess(""); // fetch
+    mockCleanPreCreate();
     mockGitError("already exists"); // worktree add -b fails
-    mockGitSuccess(""); // worktree add (without -b)
+    // worktree list shows branch checked out in stale worktree
+    mockGitSuccess(
+      "worktree /repo/path\nHEAD abc\nbranch refs/heads/main\n\n" +
+        "worktree /mock-home/.worktrees/myproject/old-session\nHEAD def\nbranch refs/heads/feat/TEST-1",
+    );
+    mockGitSuccess(""); // worktree remove --force (stale worktree)
+    mockGitSuccess(""); // worktree add on existing branch
+
+    const info = await ws.create(makeCreateConfig());
+
+    // Should remove the stale worktree first
+    expect(mockExecFileAsync).toHaveBeenCalledWith(
+      "git",
+      ["worktree", "remove", "--force", "/mock-home/.worktrees/myproject/old-session"],
+      { cwd: "/repo/path" },
+    );
+
+    expect(info.branch).toBe("feat/TEST-1");
+  });
+
+  it("falls back to checkout when worktree add on existing branch fails", async () => {
+    const ws = create();
+
+    mockCleanPreCreate();
+    mockGitError("already exists"); // worktree add -b fails
+    mockGitSuccess("worktree /repo/path\nHEAD abc\nbranch refs/heads/main"); // worktree list
+    mockGitError("some error"); // worktree add on existing branch fails
+    mockGitSuccess(""); // worktree add on baseRef
+    mockGitSuccess(""); // checkout
+
+    const info = await ws.create(makeCreateConfig());
+
+    expect(info.branch).toBe("feat/TEST-1");
+  });
+
+  it("cleans up worktree on checkout failure in fallback path", async () => {
+    const ws = create();
+
+    mockCleanPreCreate();
+    mockGitError("already exists"); // worktree add -b fails
+    mockGitSuccess("worktree /repo/path\nHEAD abc\nbranch refs/heads/main"); // worktree list
+    mockGitError("some error"); // worktree add on existing branch fails
+    mockGitSuccess(""); // worktree add on baseRef
     mockGitError("checkout failed: conflict"); // checkout fails
     mockGitSuccess(""); // worktree remove (cleanup)
 
@@ -237,24 +334,10 @@ describe("workspace.create()", () => {
     );
   });
 
-  it("still throws on checkout failure even if cleanup fails", async () => {
-    const ws = create();
-
-    mockGitSuccess(""); // fetch
-    mockGitError("already exists"); // worktree add -b fails
-    mockGitSuccess(""); // worktree add (without -b)
-    mockGitError("checkout failed"); // checkout fails
-    mockGitError("worktree remove failed"); // cleanup also fails
-
-    await expect(ws.create(makeCreateConfig())).rejects.toThrow(
-      'Failed to checkout branch "feat/TEST-1" in worktree',
-    );
-  });
-
   it("throws for non-already-exists worktree add errors", async () => {
     const ws = create();
 
-    mockGitSuccess(""); // fetch
+    mockCleanPreCreate();
     mockGitError("fatal: invalid reference"); // worktree add fails with other error
 
     await expect(ws.create(makeCreateConfig())).rejects.toThrow(
@@ -297,7 +380,7 @@ describe("workspace.create()", () => {
   it("returns correct WorkspaceInfo", async () => {
     const ws = create();
 
-    mockGitSuccess(""); // fetch
+    mockCleanPreCreate();
     mockGitSuccess(""); // worktree add
 
     const info = await ws.create(makeCreateConfig());
@@ -313,6 +396,8 @@ describe("workspace.create()", () => {
   it("expands tilde in project path", async () => {
     const ws = create();
 
+    mockGitSuccess(""); // worktree prune
+    mockExistsSync.mockReturnValueOnce(false); // worktreePath check
     mockGitSuccess(""); // fetch
     mockGitSuccess(""); // worktree add
 

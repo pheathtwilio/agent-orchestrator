@@ -1758,6 +1758,47 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       }
     }
 
+    // Clean up orphaned worktrees — worktrees that exist on disk but have no
+    // corresponding active or archived session metadata. These are left behind
+    // when `ao spawn` fails partway through (e.g. network error, git error,
+    // crash) and the cleanup in the spawn catch blocks doesn't fully succeed.
+    for (const [projectKey, project] of Object.entries(config.projects)) {
+      if (projectId && projectKey !== projectId) continue;
+
+      const plugins = resolvePlugins(project);
+      if (!plugins.workspace?.list) continue;
+
+      try {
+        const workspaces = await plugins.workspace.list(projectKey);
+        const sessionsDir = getProjectSessionsDir(project);
+        const activeIds = new Set(sessions.map((s) => s.id));
+
+        for (const ws of workspaces) {
+          // Skip if there's an active session for this workspace
+          if (activeIds.has(ws.sessionId)) continue;
+
+          // Skip if there's metadata (active or archived) for this session
+          const hasActive = readMetadataRaw(sessionsDir, ws.sessionId);
+          const hasArchived = readArchivedMetadataRaw(sessionsDir, ws.sessionId);
+          if (hasActive || hasArchived) continue;
+
+          // This is an orphaned worktree — no session metadata exists
+          if (shouldDestroyWorkspacePath(project, projectKey, ws.path)) {
+            if (!options?.dryRun) {
+              try {
+                await plugins.workspace.destroy(ws.path);
+              } catch {
+                // Best effort — worktree might already be partially gone
+              }
+            }
+            pushKilled(projectKey, `orphan:${ws.sessionId}`);
+          }
+        }
+      } catch {
+        // Best effort — workspace listing might fail
+      }
+    }
+
     const allEntryKeys = [...killedKeys, ...skippedKeys];
     const idCounts = new Map<string, number>();
     for (const entryKey of allEntryKeys) {
