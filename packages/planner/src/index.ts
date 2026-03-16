@@ -1,5 +1,6 @@
 export { createPlanner } from "./planner.js";
 export { classifyTask, resolveModel, modelTierToId } from "./skill-classifier.js";
+export { createMonitor, DEFAULT_MONITOR_CONFIG } from "./monitor.js";
 export { DEFAULT_PLANNER_CONFIG } from "./types.js";
 export type {
   Planner,
@@ -17,3 +18,8 @@ export type {
   ModelTier,
   ModelPolicy,
 } from "./types.js";
+export type {
+  MonitorConfig,
+  MonitorDeps,
+  MonitorResult,
+} from "./monitor.js";

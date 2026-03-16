@@ -24,8 +24,11 @@ RUN npm install -g @anthropic-ai/claude-code
 
 # Create non-root agent user
 RUN useradd -m -s /bin/bash agent \
-    && mkdir -p /workspace \
-    && chown agent:agent /workspace
+    && mkdir -p /workspace /workspace/.claude \
+    && chown -R agent:agent /workspace
+
+# Copy base skill CLAUDE.md (skill-specific images append to this)
+COPY docker/skills/base/CLAUDE.md /workspace/.claude/CLAUDE.md
 
 USER agent
 WORKDIR /workspace

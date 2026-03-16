@@ -7,4 +7,8 @@ USER root
 RUN npx playwright install-deps chromium \
     && npx playwright install chromium
 
+# Append frontend skill instructions to base CLAUDE.md
+COPY docker/skills/frontend/CLAUDE.md /tmp/frontend-skill.md
+RUN cat /tmp/frontend-skill.md >> /workspace/.claude/CLAUDE.md && rm /tmp/frontend-skill.md
+
 USER agent
