@@ -1,0 +1,10 @@
+# Frontend agent: extends base with browser tooling
+FROM ao-agent:latest
+
+USER root
+
+# Playwright and browser dependencies
+RUN npx playwright install-deps chromium \
+    && npx playwright install chromium
+
+USER agent
