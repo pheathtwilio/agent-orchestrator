@@ -1,4 +1,7 @@
 import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import type {
   PluginModule,
@@ -42,6 +45,7 @@ async function docker(...args: string[]): Promise<string> {
 export function create(config?: Record<string, unknown>): Runtime {
   const image = (config?.image as string) ?? DEFAULT_IMAGE;
   const network = (config?.network as string) ?? "ao-network";
+  const authMode = (config?.authMode as string) ?? "auto";
 
   return {
     name: "docker",
@@ -62,6 +66,44 @@ export function create(config?: Record<string, unknown>): Runtime {
         envArgs.push("-e", "REDIS_URL=redis://ao-redis:6379");
       }
 
+      // Auth mode: detect and configure
+      const volumeArgs: string[] = [
+        "-v", `${rtConfig.workspacePath}:/workspace`,
+      ];
+
+      const useBedrock =
+        authMode === "bedrock" ||
+        (authMode === "auto" && (
+          process.env.CLAUDE_CODE_USE_BEDROCK === "1" ||
+          (!process.env.ANTHROPIC_API_KEY && existsSync(join(homedir(), ".aws", "config")))
+        ));
+
+      if (useBedrock) {
+        // Mount AWS credentials read-only for Bedrock SSO
+        const awsDir = join(homedir(), ".aws");
+        volumeArgs.push("-v", `${awsDir}:/home/agent/.aws:ro`);
+        envArgs.push("-e", "CLAUDE_CODE_USE_BEDROCK=1");
+        if (process.env.AWS_PROFILE) {
+          envArgs.push("-e", `AWS_PROFILE=${process.env.AWS_PROFILE}`);
+        }
+        if (process.env.AWS_REGION) {
+          envArgs.push("-e", `AWS_REGION=${process.env.AWS_REGION}`);
+        }
+        // Pass Bedrock model overrides if set
+        for (const key of [
+          "ANTHROPIC_DEFAULT_SONNET_MODEL",
+          "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+          "ANTHROPIC_DEFAULT_OPUS_MODEL",
+        ]) {
+          if (process.env[key]) {
+            envArgs.push("-e", `${key}=${process.env[key]}`);
+          }
+        }
+      } else if (process.env.ANTHROPIC_API_KEY) {
+        // Pass API key directly
+        envArgs.push("-e", `ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY}`);
+      }
+
       // Start container with workspace mounted
       // --init ensures signals propagate correctly to child processes
       await docker(
@@ -69,7 +111,7 @@ export function create(config?: Record<string, unknown>): Runtime {
         "--name", containerName,
         "--network", network,
         "--init",
-        "-v", `${rtConfig.workspacePath}:/workspace`,
+        ...volumeArgs,
         "-w", "/workspace",
         ...envArgs,
         image,

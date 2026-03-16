@@ -1,5 +1,9 @@
 # Base image for all agent containers.
 # Skill-specific images extend this with additional tooling.
+#
+# Auth modes (set via environment variables at runtime):
+#   1. AWS SSO / Bedrock: mount ~/.aws read-only, set CLAUDE_CODE_USE_BEDROCK=1
+#   2. Personal API key: set ANTHROPIC_API_KEY
 FROM node:20-bookworm
 
 # System dependencies
@@ -8,6 +12,7 @@ RUN apt-get update && apt-get install -y \
     curl \
     jq \
     ripgrep \
+    less \
     && rm -rf /var/lib/apt/lists/*
 
 # GitHub CLI
@@ -19,19 +24,34 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && apt-get update && apt-get install -y gh \
     && rm -rf /var/lib/apt/lists/*
 
+# AWS CLI (for Bedrock SSO auth mode)
+RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip" \
+    && unzip -q /tmp/awscliv2.zip -d /tmp \
+    && /tmp/aws/install \
+    && rm -rf /tmp/aws /tmp/awscliv2.zip
+
 # Claude Code CLI (runs with --dangerously-skip-permissions)
 RUN npm install -g @anthropic-ai/claude-code
 
 # Create non-root agent user
 RUN useradd -m -s /bin/bash agent \
-    && mkdir -p /workspace /workspace/.claude \
-    && chown -R agent:agent /workspace
+    && mkdir -p /workspace /workspace/.claude /home/agent/.claude \
+    && chown -R agent:agent /workspace /home/agent/.claude
 
 # Copy base skill CLAUDE.md (skill-specific images append to this)
 COPY docker/skills/base/CLAUDE.md /workspace/.claude/CLAUDE.md
 
+# Copy Claude settings that grant full permissions (for --dangerously-skip-permissions)
+COPY docker/config/settings.json /home/agent/.claude/settings.json
+COPY docker/config/settings.local.json /home/agent/.claude/settings.local.json
+RUN chown -R agent:agent /home/agent/.claude
+
+# Copy entrypoint that handles auth detection
+COPY docker/scripts/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
 USER agent
 WORKDIR /workspace
 
-# Default: start bash (launch command is passed by the runtime plugin)
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["bash"]
