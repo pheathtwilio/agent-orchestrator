@@ -27,6 +27,7 @@
     "@composio/ao-plugin-tracker-github": "workspace:*",
     "@composio/ao-plugin-tracker-linear": "workspace:*",
     "@composio/ao-plugin-workspace-worktree": "workspace:*",
+    "@composio/ao-message-bus": "workspace:*",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",
     "next": "^15.1.0",
