@@ -104,6 +104,20 @@ export function create(config?: Record<string, unknown>): Runtime {
         envArgs.push("-e", `ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY}`);
       }
 
+      // Always pass model overrides if set (works in both auth modes)
+      for (const key of [
+        "ANTHROPIC_MODEL_OPUS",
+        "ANTHROPIC_MODEL_SONNET",
+        "ANTHROPIC_MODEL_HAIKU",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL",
+      ]) {
+        if (process.env[key] && !envArgs.includes(`${key}=${process.env[key]}`)) {
+          envArgs.push("-e", `${key}=${process.env[key]}`);
+        }
+      }
+
       // Start container with workspace mounted
       // --init ensures signals propagate correctly to child processes
       await docker(

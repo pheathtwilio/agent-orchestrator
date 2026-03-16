@@ -86,14 +86,26 @@ export function resolveModel(
   return policy.implementation[complexity];
 }
 
-/** Map a model tier to an actual Anthropic model ID */
+/**
+ * Map a model tier to an actual Anthropic model ID.
+ *
+ * Respects env var overrides:
+ *   ANTHROPIC_MODEL_OPUS, ANTHROPIC_MODEL_SONNET, ANTHROPIC_MODEL_HAIKU
+ *   (or Bedrock-style: ANTHROPIC_DEFAULT_OPUS_MODEL, etc.)
+ */
 export function modelTierToId(tier: ModelTier): string {
   switch (tier) {
     case "opus":
-      return "claude-opus-4-0-20250514";
+      return process.env.ANTHROPIC_MODEL_OPUS
+        ?? process.env.ANTHROPIC_DEFAULT_OPUS_MODEL
+        ?? "claude-opus-4-0-20250514";
     case "sonnet":
-      return "claude-sonnet-4-20250514";
+      return process.env.ANTHROPIC_MODEL_SONNET
+        ?? process.env.ANTHROPIC_DEFAULT_SONNET_MODEL
+        ?? "claude-sonnet-4-20250514";
     case "haiku":
-      return "claude-haiku-4-5-20251001";
+      return process.env.ANTHROPIC_MODEL_HAIKU
+        ?? process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL
+        ?? "claude-haiku-4-5-20251001";
   }
 }
