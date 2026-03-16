@@ -44,6 +44,12 @@ importers:
       '@composio/ao-core':
         specifier: workspace:*
         version: link:../core
+      '@composio/ao-message-bus':
+        specifier: workspace:*
+        version: link:../message-bus
+      '@composio/ao-planner':
+        specifier: workspace:*
+        version: link:../planner
       '@composio/ao-plugin-agent-aider':
         specifier: workspace:*
         version: link:../plugins/agent-aider
@@ -71,6 +77,9 @@ importers:
       '@composio/ao-plugin-notifier-webhook':
         specifier: workspace:*
         version: link:../plugins/notifier-webhook
+      '@composio/ao-plugin-runtime-docker':
+        specifier: workspace:*
+        version: link:../plugins/runtime-docker
       '@composio/ao-plugin-runtime-process':
         specifier: workspace:*
         version: link:../plugins/runtime-process
