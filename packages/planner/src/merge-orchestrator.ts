@@ -86,24 +86,32 @@ export async function createFeaturePR(
   try {
     // If integration test branch exists, it already has all task branches merged.
     // Rename/reuse it as the feature branch.
-    if (input.integrationBranch) {
-      // Fetch latest from remote
-      await git(input.repoPath, "fetch", "origin");
+    // Fetch latest from remote
+    await git(input.repoPath, "fetch", "origin");
 
+    // Try to use the integration branch if it exists
+    let usedIntegrationBranch = false;
+    if (input.integrationBranch) {
       // Check if integration branch exists locally
       const localBranches = await git(input.repoPath, "branch", "--list", input.integrationBranch);
 
       if (localBranches) {
-        // Create feature branch from the integration branch
         await git(input.repoPath, "branch", "-f", featureBranch, input.integrationBranch);
+        usedIntegrationBranch = true;
       } else {
-        // Try remote
-        const remoteBranch = `origin/${input.integrationBranch}`;
-        await git(input.repoPath, "branch", "-f", featureBranch, remoteBranch);
+        // Try remote — but don't fail if it doesn't exist
+        try {
+          const remoteBranch = `origin/${input.integrationBranch}`;
+          await git(input.repoPath, "branch", "-f", featureBranch, remoteBranch);
+          usedIntegrationBranch = true;
+        } catch {
+          // Integration branch doesn't exist — fall through to manual merge
+        }
       }
-    } else {
+    }
+
+    if (!usedIntegrationBranch) {
       // No integration branch — merge task branches ourselves
-      await git(input.repoPath, "fetch", "origin");
       await git(input.repoPath, "checkout", "-B", featureBranch, `origin/${cfg.baseBranch}`);
 
       for (const branch of input.taskBranches) {
