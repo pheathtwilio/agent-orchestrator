@@ -142,6 +142,13 @@ export function registerPlan(program: Command): void {
               projectId: params.projectId,
               prompt: params.prompt,
               branch: params.branch,
+              runtime: "docker",
+              runtimeConfig: { image: params.dockerImage },
+              environment: {
+                ...params.environment,
+                AO_SKILL: params.skill,
+                AO_MODEL: params.model,
+              },
             });
             return session.id;
           },
@@ -210,6 +217,13 @@ export function registerPlan(program: Command): void {
               projectId: params.projectId,
               prompt: params.prompt,
               branch: params.branch,
+              runtime: "docker",
+              runtimeConfig: { image: params.dockerImage },
+              environment: {
+                ...params.environment,
+                AO_SKILL: params.skill,
+                AO_MODEL: params.model,
+              },
             });
             return session.id;
           },

@@ -703,8 +703,8 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
   }
 
   /** Resolve which plugins to use for a project. */
-  function resolvePlugins(project: ProjectConfig, agentName?: string) {
-    const runtime = registry.get<Runtime>("runtime", project.runtime ?? config.defaults.runtime);
+  function resolvePlugins(project: ProjectConfig, agentName?: string, runtimeOverride?: string) {
+    const runtime = registry.get<Runtime>("runtime", runtimeOverride ?? project.runtime ?? config.defaults.runtime);
     const agent = registry.get<Agent>("agent", agentName ?? project.agent ?? config.defaults.agent);
     const workspace = registry.get<Workspace>(
       "workspace",
@@ -909,9 +909,10 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       defaults: config.defaults,
       spawnAgentOverride: spawnConfig.agent,
     });
-    const plugins = resolvePlugins(project, selection.agentName);
+    const plugins = resolvePlugins(project, selection.agentName, spawnConfig.runtime);
     if (!plugins.runtime) {
-      throw new Error(`Runtime plugin '${project.runtime ?? config.defaults.runtime}' not found`);
+      const runtimeName = spawnConfig.runtime ?? project.runtime ?? config.defaults.runtime;
+      throw new Error(`Runtime plugin '${runtimeName}' not found`);
     }
 
     if (!plugins.agent) {
@@ -1070,7 +1071,9 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           AO_DATA_DIR: sessionsDir, // Pass sessions directory (not root dataDir)
           AO_SESSION_NAME: sessionId, // User-facing session name
           ...(tmuxName && { AO_TMUX_NAME: tmuxName }), // Tmux session name if using new arch
+          ...spawnConfig.environment, // Per-spawn env overrides (e.g. from planner)
         },
+        ...(spawnConfig.runtimeConfig && { runtimeConfig: spawnConfig.runtimeConfig }),
       });
     } catch (err) {
       // Clean up workspace and reserved ID if agent config or runtime creation failed

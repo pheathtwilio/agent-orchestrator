@@ -53,6 +53,8 @@ export function create(config?: Record<string, unknown>): Runtime {
     async create(rtConfig: RuntimeCreateConfig): Promise<RuntimeHandle> {
       assertValidSessionId(rtConfig.sessionId);
       const containerName = `ao-${rtConfig.sessionId}`;
+      // Per-session image override (e.g. skill-specific Dockerfiles)
+      const sessionImage = (rtConfig.runtimeConfig?.image as string) ?? image;
 
       // Build environment flags
       const envArgs: string[] = [];
@@ -128,7 +130,7 @@ export function create(config?: Record<string, unknown>): Runtime {
         ...volumeArgs,
         "-w", "/workspace",
         ...envArgs,
-        image,
+        sessionImage,
         "bash", "-c", rtConfig.launchCommand,
       );
 

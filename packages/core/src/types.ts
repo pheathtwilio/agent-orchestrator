@@ -193,6 +193,12 @@ export interface SessionSpawnConfig {
   lineage?: string[];
   /** Decomposition context — sibling task descriptions (passed to prompt builder) */
   siblings?: string[];
+  /** Override the runtime plugin for this session (e.g. "docker", "tmux") */
+  runtime?: string;
+  /** Extra config passed to the runtime plugin's create() (e.g. { image: "ao-agent-frontend:latest" }) */
+  runtimeConfig?: Record<string, unknown>;
+  /** Extra environment variables merged into the runtime environment */
+  environment?: Record<string, string>;
 }
 
 /** Config for creating an orchestrator session */
@@ -239,6 +245,8 @@ export interface RuntimeCreateConfig {
   workspacePath: string;
   launchCommand: string;
   environment: Record<string, string>;
+  /** Per-session config passed to the runtime plugin (e.g. { image: "ao-agent-frontend:latest" }) */
+  runtimeConfig?: Record<string, unknown>;
 }
 
 /** Opaque handle returned by runtime.create() */
