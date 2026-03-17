@@ -108,7 +108,15 @@ export const SwimLane = memo(function SwimLane({
         </div>
 
         {/* Status label */}
-        <span className="text-xs text-zinc-500 whitespace-nowrap flex-shrink-0">
+        <span
+          className={cn(
+            "text-xs whitespace-nowrap flex-shrink-0",
+            isActive ? "text-cyan-400 font-medium" : "text-zinc-500",
+          )}
+        >
+          {isActive && (
+            <span className="inline-block w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse mr-1.5 align-middle" />
+          )}
           {task.status.replace("_", " ")}
         </span>
 

@@ -98,7 +98,7 @@ export function createPlanner(
 
   // Track last activity per session for stuck detection
   const sessionActivity = new Map<string, number>();
-  const STUCK_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes no output change
+  const STUCK_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes no progress update
 
   function emit(event: Omit<PlannerEvent, "timestamp">): void {
     const full: PlannerEvent = { ...event, timestamp: Date.now() };
@@ -1146,6 +1146,17 @@ export function createPlanner(
           break;
         }
 
+        case "PROGRESS_UPDATE": {
+          // Update activity timestamp for stuck detection
+          if (taskId) {
+            const sid = plan.activeSessions.get(taskId);
+            if (sid) {
+              sessionActivity.set(sid, Date.now());
+            }
+          }
+          break;
+        }
+
         case "FILE_LOCK_REQUEST": {
           const filePath = message.payload.filePath as string;
           const owner = message.payload.owner as string;
@@ -1202,6 +1213,63 @@ export function createPlanner(
               taskId: victim,
               detail: "Preempted deadlocked task — will retry after dependency completes",
             });
+          }
+        }
+
+        // Check for stuck agents — no activity within threshold
+        const now = Date.now();
+        for (const [taskId, sessionId] of plan.activeSessions) {
+          const lastActive = sessionActivity.get(sessionId) ?? 0;
+          if (lastActive > 0 && (now - lastActive) > STUCK_THRESHOLD_MS) {
+            emit({
+              type: "agent_stuck",
+              planId,
+              taskId,
+              sessionId,
+              detail: `Agent idle for ${Math.round((now - lastActive) / 60000)}m — killing and reassigning`,
+            });
+
+            try {
+              await deps.killSession(sessionId);
+            } catch {
+              // Container may already be gone
+            }
+            plan.activeSessions.delete(taskId);
+            sessionActivity.delete(sessionId);
+            await deps.fileLocks.releaseAll(taskId);
+
+            // Reset task to pending for retry (unless it's a special task)
+            if (taskId === "integration-test" || taskId === "verify-build") {
+              const node = plan.taskGraph.nodes.find((n) => n.id === taskId);
+              if (node) {
+                node.status = "failed";
+                await deps.taskStore.updateTask(plan.taskGraph.id, taskId, {
+                  status: "failed",
+                  assignedTo: null,
+                });
+              }
+              emit({
+                type: "plan_failed",
+                planId,
+                detail: `${taskId} agent timed out after ${Math.round(STUCK_THRESHOLD_MS / 60000)}m`,
+              });
+              plan.phase = "failed";
+              await cleanupPlanResources(plan);
+            } else {
+              await deps.taskStore.updateTask(plan.taskGraph.id, taskId, {
+                status: "pending",
+                assignedTo: null,
+              });
+              const node = plan.taskGraph.nodes.find((n) => n.id === taskId);
+              if (node) node.status = "pending";
+
+              emit({
+                type: "task_reassigned",
+                planId,
+                taskId,
+                detail: "Reassigning stuck task to new agent",
+              });
+            }
           }
         }
 
