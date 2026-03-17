@@ -386,6 +386,21 @@ export function createPlanner(
     }
   }
 
+  /** Either spawn integration test or complete the plan directly */
+  async function finalizePlan(plan: ExecutionPlan): Promise<void> {
+    if (cfg.skipIntegrationTest) {
+      plan.phase = "complete";
+      plan.updatedAt = Date.now();
+      emit({
+        type: "plan_complete",
+        planId: plan.id,
+        detail: "All tasks complete (integration test skipped)",
+      });
+    } else {
+      await spawnTestingAgent(plan);
+    }
+  }
+
   return {
     async planFeature(
       projectId: string,
@@ -575,7 +590,7 @@ export function createPlanner(
             // Check if all implementation tasks are now verified (complete)
             const allVerified = plan.taskGraph.nodes.every((n) => n.status === "complete");
             if (allVerified && plan.phase === "executing") {
-              await spawnTestingAgent(plan);
+              await finalizePlan(plan);
             } else {
               await spawnReadyTasks(plan);
             }
@@ -675,7 +690,7 @@ export function createPlanner(
               // Check if all tasks are complete → integration test
               const allComplete = plan.taskGraph.nodes.every((n) => n.status === "complete");
               if (allComplete && plan.phase === "executing") {
-                await spawnTestingAgent(plan);
+                await finalizePlan(plan);
               } else {
                 await spawnReadyTasks(plan);
               }
@@ -913,7 +928,7 @@ export function createPlanner(
           if (!hasWork) {
             const allComplete = plan.taskGraph.nodes.every((n) => n.status === "complete");
             if (allComplete) {
-              await spawnTestingAgent(plan);
+              await finalizePlan(plan);
             }
           }
         }

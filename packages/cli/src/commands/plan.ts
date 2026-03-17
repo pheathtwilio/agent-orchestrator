@@ -119,10 +119,12 @@ export function registerPlan(program: Command): void {
     .command("create <project> <description>")
     .description("Decompose a feature into tasks, classify skills, and create an execution plan")
     .option("--auto-approve", "Skip approval and start executing immediately")
+    .option("--no-test", "Skip integration testing after all tasks complete")
     .option("--max-concurrency <n>", "Max parallel agents", "5")
     .option("--model <model>", "Planning model", DEFAULT_PLANNER_CONFIG.planningModel)
     .action(async (projectId: string, description: string, opts: {
       autoApprove?: boolean;
+      test?: boolean;
       maxConcurrency?: string;
       model?: string;
     }) => {
@@ -168,6 +170,7 @@ export function registerPlan(program: Command): void {
           planningModel: opts.model,
           maxConcurrency: parseInt(opts.maxConcurrency ?? "5", 10),
           requireApproval: !opts.autoApprove,
+          skipIntegrationTest: opts.test === false,
         },
       );
 
@@ -392,12 +395,14 @@ export function registerPlan(program: Command): void {
     .command("watch <project> <plan-id>")
     .description("Long-running process: subscribe to agent messages, trigger tests, stream events")
     .option("--per-task-test", "Spawn separate test agents per task (default: agents self-test)")
+    .option("--no-test", "Skip integration testing after all tasks complete")
     .option("--follow", "Follow real-time output from all agents")
     .option("--no-pr", "Skip creating a consolidated PR on completion")
     .option("--draft", "Create PR as draft")
     .option("--no-cleanup", "Keep individual task branches after PR creation")
     .action(async (projectId: string, planId: string, opts: {
       perTaskTest?: boolean;
+      test?: boolean;
       follow?: boolean;
       pr?: boolean;
       draft?: boolean;
@@ -447,6 +452,7 @@ export function registerPlan(program: Command): void {
         },
         {
           perTaskTesting: opts.perTaskTest,
+          skipIntegrationTest: opts.test === false,
         },
       );
 

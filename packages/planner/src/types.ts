@@ -44,6 +44,8 @@ export interface PlannerConfig {
   modelPolicy: ModelPolicy;
   /** Run per-task test agents before integration testing */
   perTaskTesting: boolean;
+  /** Skip integration testing entirely (useful for docs-only changes) */
+  skipIntegrationTest: boolean;
   /** Docker image mapping per skill */
   imageMap: Record<AgentSkill, string>;
 }
@@ -68,6 +70,7 @@ export const DEFAULT_PLANNER_CONFIG: PlannerConfig = {
   requireApproval: true,
   maxConcurrency: 5,
   perTaskTesting: false,
+  skipIntegrationTest: false,
   modelPolicy: {
     planning: "opus",
     implementation: {
