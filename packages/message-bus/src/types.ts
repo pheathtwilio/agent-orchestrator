@@ -178,6 +178,31 @@ export interface TaskStore {
   /** Delete a task graph */
   deleteGraph(graphId: string): Promise<boolean>;
 
+  /** Get token usage for a plan (all sessions) */
+  getUsage(planId: string): Promise<PlanUsage>;
+
   /** Graceful shutdown */
   disconnect(): Promise<void>;
+}
+
+export interface SessionUsage {
+  taskId: string;
+  skill: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  costUsd: number;
+  updatedAt: number;
+}
+
+export interface PlanUsage {
+  sessions: Record<string, SessionUsage>;
+  totals: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheCreationTokens: number;
+    costUsd: number;
+  };
 }

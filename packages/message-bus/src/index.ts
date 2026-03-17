@@ -15,4 +15,6 @@ export type {
   TaskNode,
   TaskGraph,
   TaskStatus,
+  SessionUsage,
+  PlanUsage,
 } from "./types.js";

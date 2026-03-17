@@ -5,8 +5,9 @@
  * Responsibilities:
  * 1. Watches /tmp/ao-inbox for orchestrator→agent messages
  * 2. Publishes heartbeats to Redis so the monitor knows we're alive
- * 3. When the agent process exits, publishes TASK_COMPLETE or TASK_FAILED
- * 4. Forwards ABORT messages by sending SIGTERM to the agent process
+ * 3. Captures token usage from Claude Code JSON output
+ * 4. When the agent process exits, publishes TASK_COMPLETE or TASK_FAILED
+ * 5. Forwards ABORT messages by sending SIGTERM to the agent process
  *
  * Environment variables (set by the runtime plugin):
  *   REDIS_URL        — Redis connection string (default: redis://ao-redis:6379)
@@ -45,6 +46,49 @@ const SKILL = process.env.AO_SKILL ?? "fullstack";
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const INBOX_PATH = "/tmp/ao-inbox";
 const INBOX_POLL_MS = 2_000;
+const USAGE_KEY = `ao:usage:${PLAN_ID}`;
+
+// ---------------------------------------------------------------------------
+// Token usage tracking
+// ---------------------------------------------------------------------------
+let sessionUsage = {
+  inputTokens: 0,
+  outputTokens: 0,
+  cacheReadTokens: 0,
+  cacheCreationTokens: 0,
+  costUsd: 0,
+};
+
+// Keep track of the last few output lines for activity reporting
+const recentLines = [];
+const MAX_RECENT_LINES = 5;
+
+function trackLine(line) {
+  recentLines.push(line);
+  if (recentLines.length > MAX_RECENT_LINES) {
+    recentLines.shift();
+  }
+}
+
+/** Try to parse a JSON result line from Claude Code --output-format json */
+function tryParseUsage(line) {
+  try {
+    const data = JSON.parse(line);
+    if (data.type === "result" && data.usage) {
+      sessionUsage = {
+        inputTokens: data.usage.input_tokens ?? 0,
+        outputTokens: data.usage.output_tokens ?? 0,
+        cacheReadTokens: data.usage.cache_read_input_tokens ?? 0,
+        cacheCreationTokens: data.usage.cache_creation_input_tokens ?? 0,
+        costUsd: data.total_cost_usd ?? 0,
+      };
+      return data;
+    }
+  } catch {
+    // Not JSON or not a result — that's fine
+  }
+  return null;
+}
 
 // ---------------------------------------------------------------------------
 // Redis helpers — minimal, no dependency on @composio/ao-message-bus
@@ -95,6 +139,23 @@ async function publishOutput(channel, line) {
     }));
   } catch {
     // Non-critical — don't let output streaming failures affect the agent
+  }
+}
+
+/** Update cumulative token usage for this plan in Redis */
+async function updatePlanUsage() {
+  if (!PLAN_ID) return;
+  try {
+    await ensureRedis();
+    // Store per-session usage as a hash field, and increment plan totals
+    await redis.hset(USAGE_KEY, SESSION_ID, JSON.stringify({
+      taskId: TASK_ID,
+      skill: SKILL,
+      ...sessionUsage,
+      updatedAt: Date.now(),
+    }));
+  } catch {
+    // Non-critical
   }
 }
 
@@ -156,10 +217,10 @@ function launchAgent() {
     writeFileSync(promptFile, prompt);
 
     // The launch command comes as: bash -c "claude --dangerously-skip-permissions ..."
-    // Inject the prompt file via -p flag into the inner command
+    // Inject the prompt file via -p flag and --output-format json for token tracking
     if (args[0] === "bash" && args[1] === "-c" && args[2]?.includes("claude")) {
-      args[2] = `${args[2]} -p "$(cat /tmp/ao-prompt.txt)"`;
-      console.log(`[sidecar] Injected prompt (${prompt.length} chars) via -p flag`);
+      args[2] = `${args[2]} --output-format json -p "$(cat /tmp/ao-prompt.txt)"`;
+      console.log(`[sidecar] Injected prompt (${prompt.length} chars) via -p flag with JSON output`);
     }
   }
 
@@ -175,6 +236,9 @@ function launchAgent() {
 
   const outputChannel = `ao:output:${SESSION_ID}`;
 
+  // Track the last stdout line — Claude Code JSON result will be the final line
+  let lastStdoutLine = "";
+
   function streamOutput(stream, label) {
     let buffer = "";
     stream.on("data", (chunk) => {
@@ -188,12 +252,20 @@ function launchAgent() {
       for (const line of lines) {
         if (line.trim()) {
           publishOutput(outputChannel, line);
+          trackLine(line.trim());
+          if (label === "stdout") {
+            lastStdoutLine = line.trim();
+          }
         }
       }
     });
     stream.on("end", () => {
       if (buffer.trim()) {
         publishOutput(outputChannel, buffer);
+        trackLine(buffer.trim());
+        if (label === "stdout") {
+          lastStdoutLine = buffer.trim();
+        }
       }
     });
   }
@@ -206,6 +278,15 @@ function launchAgent() {
 
     // Stop heartbeat
     clearInterval(heartbeatTimer);
+
+    // Try to parse token usage from the last stdout line (JSON output)
+    const resultData = tryParseUsage(lastStdoutLine);
+    if (resultData) {
+      console.log(`[sidecar] Token usage — input: ${sessionUsage.inputTokens}, output: ${sessionUsage.outputTokens}, cost: $${sessionUsage.costUsd.toFixed(4)}`);
+    }
+
+    // Persist final usage to Redis
+    await updatePlanUsage();
 
     // Collect git info for the completion report
     let gitInfo = { branch: "", commits: [] };
@@ -227,13 +308,17 @@ function launchAgent() {
       await publishToOrchestrator("TASK_COMPLETE", {
         branch: gitInfo.branch,
         commits: gitInfo.commits,
-        summary: `Task ${TASK_ID} completed successfully (skill: ${SKILL})`,
+        summary: resultData?.result
+          ? resultData.result.slice(0, 500)
+          : `Task ${TASK_ID} completed successfully (skill: ${SKILL})`,
+        usage: sessionUsage,
       });
     } else {
       await publishToOrchestrator("TASK_FAILED", {
         error: signal ? `Killed by ${signal}` : `Exit code ${code}`,
         branch: gitInfo.branch,
         commits: gitInfo.commits,
+        usage: sessionUsage,
       });
     }
 
@@ -255,7 +340,12 @@ function startHeartbeat() {
     await publishToOrchestrator("PROGRESS_UPDATE", {
       status: "alive",
       skill: SKILL,
+      usage: sessionUsage,
+      recentActivity: recentLines.slice(-3).join(" | "),
     });
+
+    // Periodically persist usage
+    await updatePlanUsage();
   }, HEARTBEAT_INTERVAL_MS);
 
   // Don't let the heartbeat timer prevent process exit
@@ -295,6 +385,7 @@ async function main() {
   await publishToOrchestrator("PROGRESS_UPDATE", {
     status: "starting",
     skill: SKILL,
+    usage: sessionUsage,
   });
 
   startHeartbeat();

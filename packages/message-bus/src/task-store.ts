@@ -1,6 +1,6 @@
 import RedisModule from "ioredis";
 const Redis = RedisModule.default ?? RedisModule;
-import type { TaskStore, TaskGraph, TaskNode } from "./types.js";
+import type { TaskStore, TaskGraph, TaskNode, PlanUsage, SessionUsage } from "./types.js";
 
 const DEFAULT_REDIS_URL = "redis://localhost:6379";
 const GRAPH_PREFIX = "ao:taskgraph:";
@@ -125,7 +125,39 @@ export function createTaskStore(redisUrl?: string): TaskStore {
       await ensureConnected();
       const deleted = await redis.del(graphKey(graphId));
       await redis.srem(GRAPH_INDEX, graphId);
+      // Also clean up usage data
+      await redis.del(`ao:usage:${graphId}`);
       return deleted > 0;
+    },
+
+    async getUsage(planId: string): Promise<PlanUsage> {
+      await ensureConnected();
+      const data = await redis.hgetall(`ao:usage:${planId}`);
+
+      const sessions: Record<string, SessionUsage> = {};
+      const totals = {
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        costUsd: 0,
+      };
+
+      for (const [sessionId, json] of Object.entries(data)) {
+        try {
+          const usage = JSON.parse(json) as SessionUsage;
+          sessions[sessionId] = usage;
+          totals.inputTokens += usage.inputTokens;
+          totals.outputTokens += usage.outputTokens;
+          totals.cacheReadTokens += usage.cacheReadTokens;
+          totals.cacheCreationTokens += usage.cacheCreationTokens;
+          totals.costUsd += usage.costUsd;
+        } catch {
+          // Skip malformed entries
+        }
+      }
+
+      return { sessions, totals };
     },
 
     async disconnect(): Promise<void> {
