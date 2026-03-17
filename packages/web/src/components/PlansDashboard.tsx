@@ -33,6 +33,13 @@ interface FileLock {
   ageMs: number;
 }
 
+interface BranchInfo {
+  name: string;
+  isCurrent: boolean;
+  lastCommitAge: string;
+  lastCommitMessage: string;
+}
+
 // ── Helpers ──
 
 function ProgressBar({ percent }: { percent: number }) {
@@ -108,6 +115,8 @@ export function PlansDashboard() {
   const [activeTab, setActiveTab] = useState<"lanes" | "log" | "summary">("lanes");
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
+  const [branches, setBranches] = useState<BranchInfo[]>([]);
+  const [defaultBranch, setDefaultBranch] = useState<string>("main");
 
   // SSE connection for the selected plan
   const { snapshot, messages, outputLines, connected } = usePlanEvents(
@@ -138,6 +147,17 @@ export function PlansDashboard() {
     }
   }, []);
 
+  const fetchBranches = useCallback(async () => {
+    try {
+      const res = await fetch("/api/projects/branches");
+      const data = await res.json();
+      setBranches(data.branches ?? []);
+      if (data.defaultBranch) setDefaultBranch(data.defaultBranch);
+    } catch {
+      // Retry next poll
+    }
+  }, []);
+
   useEffect(() => {
     fetch("/api/projects")
       .then((r) => r.json())
@@ -145,12 +165,14 @@ export function PlansDashboard() {
       .catch(() => {});
     fetchPlans();
     fetchLocks();
+    fetchBranches();
     const interval = setInterval(() => {
       fetchPlans();
       fetchLocks();
+      fetchBranches();
     }, 10000);
     return () => clearInterval(interval);
-  }, [fetchPlans, fetchLocks]);
+  }, [fetchPlans, fetchLocks, fetchBranches]);
 
   const primaryProject = projects[0];
 
@@ -167,6 +189,7 @@ export function PlansDashboard() {
 
   async function cancelPlan(planId: string) {
     await fetch(`/api/plans/${planId}/cancel`, { method: "POST" });
+    setSelectedPlanId(null);
     fetchPlans();
   }
 
@@ -207,21 +230,26 @@ export function PlansDashboard() {
     }
   }
 
-  // Auto-expand active swim lanes when stream output is enabled
-  useEffect(() => {
-    if (followOutput && planDetail) {
-      const activeIds = planDetail.tasks
+  // Auto-expand active swim lanes when stream output is toggled on.
+  // Use a stable key (sorted active IDs) to avoid re-running on every snapshot.
+  const activeTaskIds = planDetail
+    ? planDetail.tasks
         .filter((t) => ["assigned", "in_progress", "testing"].includes(t.status))
-        .map((t) => t.id);
-      if (activeIds.length > 0) {
-        setExpandedTasks((prev) => {
-          const next = new Set(prev);
-          for (const id of activeIds) next.add(id);
-          return next;
-        });
-      }
+        .map((t) => t.id)
+        .sort()
+        .join(",")
+    : "";
+
+  useEffect(() => {
+    if (followOutput && activeTaskIds) {
+      const ids = activeTaskIds.split(",");
+      setExpandedTasks((prev) => {
+        const next = new Set(prev);
+        for (const id of ids) next.add(id);
+        return next;
+      });
     }
-  }, [followOutput, planDetail]);
+  }, [followOutput, activeTaskIds]);
 
   function toggleTask(taskId: string) {
     setExpandedTasks((prev) => {
@@ -399,6 +427,51 @@ export function PlansDashboard() {
                     </span>
                   </div>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* Git branches */}
+          {branches.length > 0 && (
+            <div>
+              <h2 className="text-sm font-semibold mb-2 text-zinc-400 uppercase tracking-wider">
+                Branches
+                <span className="text-[10px] text-zinc-600 font-normal ml-2">{branches.length}</span>
+              </h2>
+              <div className="space-y-1 max-h-64 overflow-y-auto">
+                {branches.map((branch) => {
+                  const isDefault = branch.name === defaultBranch;
+                  const isFeat = branch.name.startsWith("feat/") || branch.name.startsWith("test/") || branch.name.startsWith("verify/");
+                  return (
+                    <div
+                      key={branch.name}
+                      className={cn(
+                        "text-[10px] p-1.5 rounded border",
+                        branch.isCurrent
+                          ? "bg-cyan-950/20 border-cyan-800/40"
+                          : "bg-zinc-900/50 border-zinc-800/50",
+                      )}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        {branch.isCurrent && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 flex-shrink-0" />
+                        )}
+                        <span
+                          className={cn(
+                            "font-mono truncate",
+                            isDefault ? "text-green-400" : isFeat ? "text-cyan-400/80" : "text-zinc-400",
+                          )}
+                        >
+                          {branch.name}
+                        </span>
+                      </div>
+                      <div className="flex justify-between mt-0.5 pl-3">
+                        <span className="text-zinc-600 truncate">{branch.lastCommitMessage}</span>
+                        <span className="text-zinc-700 whitespace-nowrap ml-2">{branch.lastCommitAge}</span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
