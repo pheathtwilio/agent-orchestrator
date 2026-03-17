@@ -5,11 +5,9 @@ import { loadConfig } from "@composio/ao-core";
 import {
   createPlanner,
   createMonitor,
-  createTestTrigger,
   DEFAULT_PLANNER_CONFIG,
   type ExecutionPlan,
   type PlannerEvent,
-  type TaskCompletionInfo,
 } from "@composio/ao-planner";
 import {
   createMessageBus,
@@ -385,9 +383,9 @@ export function registerPlan(program: Command): void {
   plan
     .command("watch <project> <plan-id>")
     .description("Long-running process: subscribe to agent messages, trigger tests, stream events")
-    .option("--no-test", "Skip per-task test agents")
+    .option("--no-per-task-test", "Skip per-task test agents (go straight to integration test)")
     .option("--follow", "Follow real-time output from all agents")
-    .action(async (projectId: string, planId: string, opts: { test: boolean; follow?: boolean }) => {
+    .action(async (projectId: string, planId: string, opts: { perTaskTest: boolean; follow?: boolean }) => {
       banner("Plan Watch");
 
       const config = loadConfig();
@@ -430,15 +428,13 @@ export function registerPlan(program: Command): void {
           spawnSession,
           killSession: async (sessionId) => { await sm.kill(sessionId); },
         },
+        {
+          perTaskTesting: opts.perTaskTest,
+        },
       );
 
       // Load the plan from Redis
-      const planData = await planner.loadPlan(planId, projectId);
-
-      // Set up test trigger
-      const testTrigger = opts.test
-        ? createTestTrigger({ spawnSession }, DEFAULT_PLANNER_CONFIG)
-        : null;
+      await planner.loadPlan(planId, projectId);
 
       // Track which sessions we're following output from
       const followedSessions = new Set<string>();
@@ -462,30 +458,6 @@ export function registerPlan(program: Command): void {
             if (followedSessions.has(event.sessionId)) {
               followedSessions.delete(event.sessionId);
               await messageBus.unsubscribeOutput(event.sessionId);
-            }
-          }
-        }
-
-        // Trigger per-task test on completion
-        if (event.type === "task_complete" && event.taskId && testTrigger) {
-          const node = planData.taskGraph.nodes.find((n) => n.id === event.taskId);
-          if (node && node.result) {
-            try {
-              const testSessionId = await testTrigger.triggerTaskTest({
-                planId,
-                projectId,
-                taskId: event.taskId,
-                taskTitle: node.title,
-                skill: node.skill,
-                branch: node.result.branch,
-                commits: node.result.commits,
-                summary: node.result.summary,
-                fileBoundary: node.fileBoundary,
-                acceptanceCriteria: node.acceptanceCriteria,
-              });
-              console.log(chalk.magenta(`  [test] Spawned test agent ${testSessionId} for task ${event.taskId}`));
-            } catch (err) {
-              console.error(chalk.yellow(`  [test] Failed to spawn test agent: ${err instanceof Error ? err.message : err}`));
             }
           }
         }

@@ -42,6 +42,8 @@ export interface PlannerConfig {
   maxConcurrency: number;
   /** Model assignment policy */
   modelPolicy: ModelPolicy;
+  /** Run per-task test agents before integration testing */
+  perTaskTesting: boolean;
   /** Docker image mapping per skill */
   imageMap: Record<AgentSkill, string>;
 }
@@ -65,6 +67,7 @@ export const DEFAULT_PLANNER_CONFIG: PlannerConfig = {
   maxDepth: 3,
   requireApproval: true,
   maxConcurrency: 5,
+  perTaskTesting: true,
   modelPolicy: {
     planning: "opus",
     implementation: {

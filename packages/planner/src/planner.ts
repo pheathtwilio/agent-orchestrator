@@ -15,6 +15,7 @@ import type {
   TaskNode as BusTaskNode,
 } from "@composio/ao-message-bus";
 import { classifyTask, resolveModel, modelTierToId } from "./skill-classifier.js";
+import { createTestTrigger } from "./test-trigger.js";
 import type {
   PlannerConfig,
   TaskAssignment,
@@ -86,6 +87,11 @@ export function createPlanner(
   const client = createAnthropicClient();
   const plans = new Map<string, ExecutionPlan>();
   const eventHandlers: PlannerEventHandler[] = [];
+
+  // Per-task test trigger — spawns a testing agent after each implementation task
+  const testTrigger = cfg.perTaskTesting
+    ? createTestTrigger({ spawnSession: deps.spawnSession }, cfg)
+    : null;
 
   // Track last activity per session for stuck detection
   const sessionActivity = new Map<string, number>();
@@ -504,49 +510,158 @@ export function createPlanner(
           // Release file locks
           await deps.fileLocks.releaseAll(taskId);
 
-          // Update task status
-          await deps.taskStore.updateTask(plan.taskGraph.id, taskId, {
-            status: "complete",
-            result: {
+          const isPerTaskTest = taskId.endsWith("-test") && taskId !== "integration-test";
+          const isIntegrationTest = taskId === "integration-test";
+          const parentTaskId = isPerTaskTest ? taskId.replace(/-test$/, "") : null;
+
+          if (isIntegrationTest) {
+            // ── Integration test passed → plan complete ──
+            plan.activeSessions.delete(taskId);
+            plan.updatedAt = Date.now();
+
+            emit({
+              type: "task_complete",
+              planId,
               taskId,
               sessionId: message.from,
-              status: "complete",
-              branch: (message.payload.branch as string) ?? "",
-              commits: (message.payload.commits as string[]) ?? [],
-              summary: (message.payload.summary as string) ?? "",
-            },
-          });
-
-          // Update local graph
-          const node = plan.taskGraph.nodes.find((n) => n.id === taskId);
-          if (node) node.status = "complete";
-
-          plan.activeSessions.delete(taskId);
-          plan.updatedAt = Date.now();
-
-          emit({
-            type: "task_complete",
-            planId,
-            taskId,
-            sessionId: message.from,
-            detail: (message.payload.summary as string) ?? "Task completed",
-          });
-
-          // Check if all tasks are complete
-          const allComplete = plan.taskGraph.nodes.every((n) => n.status === "complete");
-          if (taskId === "integration-test") {
-            // Integration test completed — mark plan as complete
+              detail: (message.payload.summary as string) ?? "Integration test passed",
+            });
             emit({
               type: "plan_complete",
               planId,
               detail: "All tasks and integration tests passed",
             });
             plan.phase = "complete";
-          } else if (allComplete && plan.phase === "executing") {
-            await spawnTestingAgent(plan);
+
+          } else if (isPerTaskTest && parentTaskId) {
+            // ── Per-task test passed → mark parent task as complete ──
+            plan.activeSessions.delete(taskId);
+            plan.updatedAt = Date.now();
+
+            const parentNode = plan.taskGraph.nodes.find((n) => n.id === parentTaskId);
+            if (parentNode) {
+              parentNode.status = "complete";
+              await deps.taskStore.updateTask(plan.taskGraph.id, parentTaskId, {
+                status: "complete",
+              });
+            }
+
+            emit({
+              type: "task_complete",
+              planId,
+              taskId,
+              sessionId: message.from,
+              detail: `Per-task test passed for ${parentTaskId}`,
+            });
+
+            // Check if all implementation tasks are now verified (complete)
+            const allVerified = plan.taskGraph.nodes.every((n) => n.status === "complete");
+            if (allVerified && plan.phase === "executing") {
+              await spawnTestingAgent(plan);
+            } else {
+              await spawnReadyTasks(plan);
+            }
+
           } else {
-            // Spawn any newly unblocked tasks
-            await spawnReadyTasks(plan);
+            // ── Implementation task completed ──
+            const result = {
+              taskId,
+              sessionId: message.from,
+              status: "complete" as const,
+              branch: (message.payload.branch as string) ?? "",
+              commits: (message.payload.commits as string[]) ?? [],
+              summary: (message.payload.summary as string) ?? "",
+            };
+
+            const node = plan.taskGraph.nodes.find((n) => n.id === taskId);
+
+            if (testTrigger && node) {
+              // Per-task testing enabled: mark as "testing", spawn test agent
+              node.status = "testing";
+              node.result = result;
+              await deps.taskStore.updateTask(plan.taskGraph.id, taskId, {
+                status: "testing",
+                result,
+              });
+
+              plan.activeSessions.delete(taskId);
+              plan.updatedAt = Date.now();
+
+              emit({
+                type: "task_complete",
+                planId,
+                taskId,
+                sessionId: message.from,
+                detail: (message.payload.summary as string) ?? "Task completed — spawning per-task test",
+              });
+
+              // Spawn per-task test agent
+              try {
+                const testSessionId = await testTrigger.triggerTaskTest({
+                  planId,
+                  projectId: plan.projectId,
+                  taskId,
+                  taskTitle: node.title,
+                  skill: node.skill,
+                  branch: result.branch,
+                  commits: result.commits,
+                  summary: result.summary,
+                  fileBoundary: node.fileBoundary,
+                  acceptanceCriteria: node.acceptanceCriteria,
+                });
+
+                plan.activeSessions.set(`${taskId}-test`, testSessionId);
+                sessionActivity.set(testSessionId, Date.now());
+
+                emit({
+                  type: "testing_started",
+                  planId,
+                  taskId: `${taskId}-test`,
+                  sessionId: testSessionId,
+                  detail: `Spawned per-task test for ${taskId}`,
+                });
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                emit({
+                  type: "testing_failed",
+                  planId,
+                  taskId: `${taskId}-test`,
+                  detail: `Failed to spawn per-task test: ${msg}`,
+                });
+                // Fall back: mark task as complete without testing
+                node.status = "complete";
+                await deps.taskStore.updateTask(plan.taskGraph.id, taskId, {
+                  status: "complete",
+                  result,
+                });
+              }
+            } else {
+              // No per-task testing: mark as complete directly
+              if (node) node.status = "complete";
+              await deps.taskStore.updateTask(plan.taskGraph.id, taskId, {
+                status: "complete",
+                result,
+              });
+
+              plan.activeSessions.delete(taskId);
+              plan.updatedAt = Date.now();
+
+              emit({
+                type: "task_complete",
+                planId,
+                taskId,
+                sessionId: message.from,
+                detail: (message.payload.summary as string) ?? "Task completed",
+              });
+
+              // Check if all tasks are complete → integration test
+              const allComplete = plan.taskGraph.nodes.every((n) => n.status === "complete");
+              if (allComplete && plan.phase === "executing") {
+                await spawnTestingAgent(plan);
+              } else {
+                await spawnReadyTasks(plan);
+              }
+            }
           }
           break;
         }
@@ -557,28 +672,21 @@ export function createPlanner(
           await deps.fileLocks.releaseAll(taskId);
 
           const error = (message.payload.error as string) ?? "Unknown error";
-
-          // Update task — mark as failed, will be reassigned by monitor
-          await deps.taskStore.updateTask(plan.taskGraph.id, taskId, {
-            status: "failed",
-          });
-
-          const failedNode = plan.taskGraph.nodes.find((n) => n.id === taskId);
-          if (failedNode) failedNode.status = "failed";
+          const isFailedPerTaskTest = taskId.endsWith("-test") && taskId !== "integration-test";
+          const failedParentId = isFailedPerTaskTest ? taskId.replace(/-test$/, "") : null;
 
           plan.activeSessions.delete(taskId);
           plan.updatedAt = Date.now();
 
-          emit({
-            type: "task_failed",
-            planId,
-            taskId,
-            sessionId: message.from,
-            detail: `Task failed: ${error}`,
-          });
-
           // Integration test failure → plan failed
           if (taskId === "integration-test") {
+            emit({
+              type: "task_failed",
+              planId,
+              taskId,
+              sessionId: message.from,
+              detail: `Integration test failed: ${error}`,
+            });
             emit({
               type: "plan_failed",
               planId,
@@ -587,6 +695,46 @@ export function createPlanner(
             plan.phase = "failed";
             break;
           }
+
+          // Per-task test failure → mark parent task as failed for reassignment
+          if (isFailedPerTaskTest && failedParentId) {
+            const parentNode = plan.taskGraph.nodes.find((n) => n.id === failedParentId);
+
+            emit({
+              type: "task_failed",
+              planId,
+              taskId,
+              sessionId: message.from,
+              detail: `Per-task test failed for ${failedParentId}: ${error}`,
+            });
+
+            if (parentNode) {
+              parentNode.status = "pending";
+              await deps.taskStore.updateTask(plan.taskGraph.id, failedParentId, {
+                status: "pending",
+                assignedTo: null,
+              });
+            }
+
+            await spawnReadyTasks(plan);
+            break;
+          }
+
+          // Regular task failure → reassign
+          await deps.taskStore.updateTask(plan.taskGraph.id, taskId, {
+            status: "failed",
+          });
+
+          const failedNode = plan.taskGraph.nodes.find((n) => n.id === taskId);
+          if (failedNode) failedNode.status = "failed";
+
+          emit({
+            type: "task_failed",
+            planId,
+            taskId,
+            sessionId: message.from,
+            detail: `Task failed: ${error}`,
+          });
 
           // Reassign: reset to pending so it gets picked up again
           await deps.taskStore.updateTask(plan.taskGraph.id, taskId, {
