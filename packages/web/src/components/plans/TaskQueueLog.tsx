@@ -50,7 +50,7 @@ export const TaskQueueLog = memo(function TaskQueueLog({
 
   return (
     <div ref={scrollRef} className="max-h-64 overflow-y-auto space-y-0.5">
-      {visible.map((msg) => {
+      {visible.map((msg, i) => {
         const style = TYPE_STYLES[msg.type] ?? { color: "text-zinc-500", label: msg.type };
         const payload = msg.payload;
         const summary = (payload.summary as string)
@@ -61,7 +61,7 @@ export const TaskQueueLog = memo(function TaskQueueLog({
 
         return (
           <div
-            key={`${msg.id}-${msg.timestamp}`}
+            key={`${msg.id}-${msg.timestamp}-${i}`}
             className="flex items-start gap-2 py-1 px-2 rounded hover:bg-zinc-800/30 transition-colors text-[11px]"
           >
             {/* Timestamp */}

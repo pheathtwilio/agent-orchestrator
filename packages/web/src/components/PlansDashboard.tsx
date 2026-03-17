@@ -153,6 +153,16 @@ export function PlansDashboard() {
     fetchPlans();
   }
 
+  async function cancelPlan(planId: string) {
+    await fetch(`/api/plans/${planId}/cancel`, { method: "POST" });
+    fetchPlans();
+  }
+
+  async function retryPlan(planId: string) {
+    await fetch(`/api/plans/${planId}/retry`, { method: "POST" });
+    fetchPlans();
+  }
+
   // Derive plan detail from SSE snapshot
   const planDetail = snapshot
     ? {
@@ -170,6 +180,20 @@ export function PlansDashboard() {
     : false;
 
   const groups = planDetail ? groupTasks(planDetail.tasks) : null;
+
+  // Compute the latest meaningful bus message per task for stage display
+  const latestActivityByTask = new Map<string, string>();
+  for (const msg of messages) {
+    const taskId = msg.payload.taskId as string | undefined;
+    if (!taskId) continue;
+    const summary = (msg.payload.summary as string)
+      ?? (msg.payload.status as string)
+      ?? (msg.payload.reason as string)
+      ?? "";
+    if (summary) {
+      latestActivityByTask.set(taskId, summary);
+    }
+  }
 
   function toggleTask(taskId: string) {
     setExpandedTasks((prev) => {
@@ -300,7 +324,7 @@ export function PlansDashboard() {
                       </div>
                     </button>
                     {/* Archive/unarchive button */}
-                    <div className="px-3 pb-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="px-3 pb-2">
                       {plan.archived ? (
                         <button
                           onClick={(e) => { e.stopPropagation(); unarchivePlan(plan.id); }}
@@ -360,7 +384,25 @@ export function PlansDashboard() {
                     Updated <TimeAgo timestamp={planDetail.updatedAt} />
                   </p>
                 </div>
-                {snapshot && <UsageBanner usage={snapshot.usage} />}
+                <div className="flex items-center gap-3">
+                  {snapshot && <UsageBanner usage={snapshot.usage} />}
+                  {/* Plan actions */}
+                  {!isTerminal ? (
+                    <button
+                      onClick={() => cancelPlan(planDetail.id)}
+                      className="px-2.5 py-1 rounded text-[10px] font-medium text-red-400 border border-red-800/50 hover:bg-red-900/30 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => retryPlan(planDetail.id)}
+                      className="px-2.5 py-1 rounded text-[10px] font-medium text-cyan-400 border border-cyan-800/50 hover:bg-cyan-900/30 transition-colors"
+                    >
+                      Retry
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* Tab bar */}
@@ -417,6 +459,7 @@ export function PlansDashboard() {
                               ? snapshot.sessionUsage[task.assignedTo]
                               : undefined
                           }
+                          latestActivity={latestActivityByTask.get(task.id)}
                           outputLines={outputLines}
                           expanded={expandedTasks.has(task.id)}
                           onToggle={() => toggleTask(task.id)}
@@ -437,6 +480,7 @@ export function PlansDashboard() {
                         <SwimLane
                           key={task.id}
                           task={task}
+                          latestActivity={latestActivityByTask.get(task.id)}
                           outputLines={outputLines}
                           expanded={expandedTasks.has(task.id)}
                           onToggle={() => toggleTask(task.id)}
@@ -463,6 +507,7 @@ export function PlansDashboard() {
                               ? snapshot.sessionUsage[task.assignedTo]
                               : undefined
                           }
+                          latestActivity={latestActivityByTask.get(task.id)}
                           outputLines={outputLines}
                           expanded={expandedTasks.has(task.id)}
                           onToggle={() => toggleTask(task.id)}

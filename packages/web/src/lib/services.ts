@@ -35,6 +35,7 @@ import {
 } from "@composio/ao-core";
 
 // Static plugin imports — webpack needs these to be string literals
+import pluginRuntimeDocker from "@composio/ao-plugin-runtime-docker";
 import pluginRuntimeTmux from "@composio/ao-plugin-runtime-tmux";
 import pluginAgentClaudeCode from "@composio/ao-plugin-agent-claude-code";
 import pluginAgentOpencode from "@composio/ao-plugin-agent-opencode";
@@ -77,6 +78,7 @@ async function initServices(): Promise<Services> {
   const registry = createPluginRegistry();
 
   // Register plugins explicitly (webpack can't handle dynamic import() in core)
+  registry.register(pluginRuntimeDocker);
   registry.register(pluginRuntimeTmux);
   registry.register(pluginAgentClaudeCode);
   registry.register(pluginAgentOpencode);

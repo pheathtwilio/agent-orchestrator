@@ -14,7 +14,6 @@ export const CreatePlanForm = memo(function CreatePlanForm({
 }: CreatePlanFormProps) {
   const [project, setProject] = useState("");
   const [description, setDescription] = useState("");
-  const [autoApprove, setAutoApprove] = useState(true);
   const [skipTesting, setSkipTesting] = useState(false);
   const [maxConcurrency, setMaxConcurrency] = useState(5);
   const [submitting, setSubmitting] = useState(false);
@@ -28,13 +27,12 @@ export const CreatePlanForm = memo(function CreatePlanForm({
     setError(null);
 
     try {
-      const res = await fetch("/api/plans", {
+      const res = await fetch("/api/plans/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           project: project.trim(),
           description: description.trim(),
-          autoApprove,
           skipTesting,
           maxConcurrency,
         }),
@@ -86,17 +84,6 @@ export const CreatePlanForm = memo(function CreatePlanForm({
       {/* Options */}
       <div className="space-y-2">
         <label className="block text-xs text-zinc-400 mb-1">Options</label>
-
-        <label className="flex items-center gap-2 text-xs text-zinc-300 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={autoApprove}
-            onChange={(e) => setAutoApprove(e.target.checked)}
-            className="rounded border-zinc-700 bg-zinc-800 text-cyan-500 focus:ring-cyan-500/30 w-3.5 h-3.5"
-            disabled={submitting}
-          />
-          Auto-approve (skip review step)
-        </label>
 
         <label className="flex items-center gap-2 text-xs text-zinc-300 cursor-pointer">
           <input

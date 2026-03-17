@@ -27,6 +27,7 @@ const SKILL_BADGES: Record<string, { bg: string; text: string }> = {
 interface SwimLaneProps {
   task: PlanTask;
   sessionUsage?: SessionUsage;
+  latestActivity?: string;
   outputLines: AgentOutputLine[];
   expanded: boolean;
   onToggle: () => void;
@@ -46,6 +47,7 @@ function formatTokens(n: number): string {
 export const SwimLane = memo(function SwimLane({
   task,
   sessionUsage,
+  latestActivity,
   outputLines,
   expanded,
   onToggle,
@@ -94,11 +96,14 @@ export const SwimLane = memo(function SwimLane({
           {task.skill}
         </span>
 
-        {/* Task title + description */}
+        {/* Task title + description + activity */}
         <div className="flex-1 min-w-0">
           <span className="text-sm text-zinc-200 block truncate">{task.title}</span>
           {task.description && (
             <span className="text-[11px] text-zinc-500 block truncate">{task.description}</span>
+          )}
+          {isActive && latestActivity && (
+            <span className="text-[10px] text-cyan-500/80 block truncate italic">{latestActivity}</span>
           )}
         </div>
 
