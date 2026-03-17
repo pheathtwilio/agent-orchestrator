@@ -51,6 +51,31 @@ echo ""
 # Initialize .claude directory
 mkdir -p "$HOME/.claude/projects" 2>/dev/null || true
 
+# ── GitHub auth ──
+# If GH_TOKEN is set, configure gh CLI and git credential helper so agents
+# can push branches and create PRs. Also rewrite SSH remotes to HTTPS so
+# the token-based auth works transparently with worktree remotes.
+if [ -n "$GH_TOKEN" ]; then
+    echo "GitHub: token configured (${GH_TOKEN:0:7}...)"
+
+    # Authenticate gh CLI
+    echo "$GH_TOKEN" | gh auth login --with-token 2>/dev/null || true
+
+    # Set gh as git credential helper (fills username/password for HTTPS)
+    gh auth setup-git 2>/dev/null || true
+
+    # Rewrite SSH URLs to HTTPS so token auth works with cloned worktrees
+    git config --global url."https://github.com/".insteadOf "git@github.com:" 2>/dev/null || true
+
+    # Set git identity for commits
+    git config --global user.name "ao-agent" 2>/dev/null || true
+    git config --global user.email "ao-agent@users.noreply.github.com" 2>/dev/null || true
+else
+    echo "GitHub: no token (push/PR disabled)"
+fi
+
+echo ""
+
 # Execute command or drop to shell
 if [ $# -eq 0 ]; then
     exec bash

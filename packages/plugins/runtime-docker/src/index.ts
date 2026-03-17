@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { promisify } from "node:util";
 import type {
   PluginModule,
@@ -21,6 +21,46 @@ export const manifest = {
   description: "Runtime plugin: Docker containers with isolated agent environments",
   version: "0.1.0",
 };
+
+/** Extract GitHub token from gh CLI (cached, non-fatal) */
+let cachedGhToken: string | null | undefined;
+async function getGhToken(): Promise<string | null> {
+  if (cachedGhToken !== undefined) return cachedGhToken;
+  try {
+    const { stdout } = await execFileAsync("gh", ["auth", "token"], {
+      timeout: 5_000,
+    });
+    cachedGhToken = stdout.trim() || null;
+  } catch {
+    cachedGhToken = null;
+  }
+  return cachedGhToken;
+}
+
+/**
+ * If workspacePath is a git worktree, resolve the parent repo's .git directory.
+ * Worktrees have a `.git` file (not directory) containing `gitdir: /path/to/.git/worktrees/<name>`.
+ * We need to mount the parent `.git` dir at the same host path inside the container
+ * so git operations work correctly.
+ */
+function resolveWorktreeGitDir(workspacePath: string): string | null {
+  const dotGit = join(workspacePath, ".git");
+  try {
+    if (!existsSync(dotGit)) return null;
+    const content = readFileSync(dotGit, "utf-8").trim();
+    // .git file format: "gitdir: /abs/path/to/.git/worktrees/<name>"
+    if (!content.startsWith("gitdir:")) return null;
+    const gitdir = content.replace("gitdir:", "").trim();
+    // Walk up from .git/worktrees/<name> to .git
+    // gitdir = /path/to/repo/.git/worktrees/ao-83
+    const parts = gitdir.split("/");
+    const worktreesIdx = parts.lastIndexOf("worktrees");
+    if (worktreesIdx < 1) return null;
+    return parts.slice(0, worktreesIdx).join("/"); // /path/to/repo/.git
+  } catch {
+    return null;
+  }
+}
 
 /** Only allow safe characters in session IDs */
 const SAFE_SESSION_ID = /^[a-zA-Z0-9_-]+$/;
@@ -73,6 +113,13 @@ export function create(config?: Record<string, unknown>): Runtime {
         "-v", `${rtConfig.workspacePath}:/workspace`,
       ];
 
+      // If workspace is a git worktree, mount the parent .git directory
+      // so git can resolve the worktree reference inside the container
+      const parentGitDir = resolveWorktreeGitDir(rtConfig.workspacePath);
+      if (parentGitDir) {
+        volumeArgs.push("-v", `${parentGitDir}:${parentGitDir}`);
+      }
+
       const useBedrock =
         authMode === "bedrock" ||
         (authMode === "auto" && (
@@ -104,6 +151,13 @@ export function create(config?: Record<string, unknown>): Runtime {
       } else if (process.env.ANTHROPIC_API_KEY) {
         // Pass API key directly
         envArgs.push("-e", `ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY}`);
+      }
+
+      // GitHub auth — pass GH_TOKEN so agents can push and create PRs.
+      // Sourced from: explicit env var > gh CLI token extraction
+      const ghToken = process.env.GH_TOKEN ?? await getGhToken();
+      if (ghToken) {
+        envArgs.push("-e", `GH_TOKEN=${ghToken}`);
       }
 
       // Always pass model overrides if set (works in both auth modes)
