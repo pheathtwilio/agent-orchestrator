@@ -127,6 +127,13 @@ export const SwimLane = memo(function SwimLane({
           </span>
         )}
 
+        {/* Output line count badge */}
+        {sessionLines.length > 0 && (
+          <span className="text-[10px] font-mono text-cyan-500/60 whitespace-nowrap flex-shrink-0">
+            {sessionLines.length} lines
+          </span>
+        )}
+
         {/* Expand chevron */}
         <svg
           className={cn(

@@ -207,6 +207,22 @@ export function PlansDashboard() {
     }
   }
 
+  // Auto-expand active swim lanes when stream output is enabled
+  useEffect(() => {
+    if (followOutput && planDetail) {
+      const activeIds = planDetail.tasks
+        .filter((t) => ["assigned", "in_progress", "testing"].includes(t.status))
+        .map((t) => t.id);
+      if (activeIds.length > 0) {
+        setExpandedTasks((prev) => {
+          const next = new Set(prev);
+          for (const id of activeIds) next.add(id);
+          return next;
+        });
+      }
+    }
+  }, [followOutput, planDetail]);
+
   function toggleTask(taskId: string) {
     setExpandedTasks((prev) => {
       const next = new Set(prev);
@@ -533,6 +549,34 @@ export function PlansDashboard() {
                       ))}
                     </TaskGroup>
                   )}
+                </div>
+              )}
+
+              {/* Live output console — shown when streaming is active */}
+              {followOutput && outputLines.length > 0 && activeTab === "lanes" && (
+                <div className="bg-zinc-950 rounded-lg border border-zinc-800 p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[10px] font-semibold uppercase tracking-wider text-cyan-500">
+                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse mr-1.5 align-middle" />
+                      Live Output
+                    </span>
+                    <span className="text-[10px] text-zinc-600 font-mono">
+                      {outputLines.length} lines
+                    </span>
+                  </div>
+                  <div className="font-mono text-[11px] text-zinc-500 leading-relaxed max-h-48 overflow-y-auto">
+                    {outputLines.slice(-30).map((line, i) => (
+                      <div key={`${line.timestamp}-${i}`} className="truncate">
+                        <span className="text-zinc-700 select-none">
+                          {new Date(line.timestamp).toLocaleTimeString()}{" "}
+                        </span>
+                        <span className="text-cyan-600/60 select-none">
+                          {line.sessionId.slice(-6)}{" "}
+                        </span>
+                        {line.line}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
