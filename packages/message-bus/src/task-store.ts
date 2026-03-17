@@ -121,6 +121,13 @@ export function createTaskStore(redisUrl?: string): TaskStore {
       return graphs;
     },
 
+    async deleteGraph(graphId: string): Promise<boolean> {
+      await ensureConnected();
+      const deleted = await redis.del(graphKey(graphId));
+      await redis.srem(GRAPH_INDEX, graphId);
+      return deleted > 0;
+    },
+
     async disconnect(): Promise<void> {
       connected = false;
       await redis.quit().catch(() => redis.disconnect());

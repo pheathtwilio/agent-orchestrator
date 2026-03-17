@@ -175,6 +175,9 @@ export interface TaskStore {
   /** Get all active task graphs */
   listGraphs(): Promise<TaskGraph[]>;
 
+  /** Delete a task graph */
+  deleteGraph(graphId: string): Promise<boolean>;
+
   /** Graceful shutdown */
   disconnect(): Promise<void>;
 }

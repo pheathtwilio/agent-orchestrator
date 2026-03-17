@@ -9,6 +9,7 @@ import {
   createMonitor,
   createFeaturePR,
   createSecurityTrigger,
+  runHousekeeping,
   DEFAULT_PLANNER_CONFIG,
   type ExecutionPlan,
   type PlannerEvent,
@@ -883,6 +884,114 @@ export function registerPlan(program: Command): void {
         console.error(chalk.red(err instanceof Error ? err.message : String(err)));
         await messageBus.disconnect();
         process.exit(1);
+      }
+    });
+
+  // ao plan cleanup [project]
+  plan
+    .command("cleanup [project]")
+    .description("Remove stopped containers, stale worktrees, orphan branches, and old plans")
+    .option("--dry-run", "Show what would be cleaned without doing it")
+    .option("--no-containers", "Skip container cleanup")
+    .option("--no-worktrees", "Skip worktree cleanup")
+    .option("--no-branches", "Skip branch cleanup")
+    .option("--max-age <days>", "Remove plans older than N days (default: 7)", "7")
+    .action(async (projectId: string | undefined, opts: {
+      dryRun?: boolean;
+      containers?: boolean;
+      worktrees?: boolean;
+      branches?: boolean;
+      maxAge?: string;
+    }) => {
+      banner("Housekeeping");
+
+      const config = loadConfig();
+
+      // If no project specified, use the first one
+      const pid = projectId ?? Object.keys(config.projects)[0];
+      const project = config.projects[pid];
+      if (!project) {
+        console.error(chalk.red(`Project "${pid}" not found in config`));
+        process.exit(1);
+      }
+
+      const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
+      const taskStore = createTaskStore(redisUrl);
+
+      const maxAgeDays = parseInt(opts.maxAge ?? "7", 10);
+
+      if (opts.dryRun) {
+        console.log(chalk.yellow("\n  Dry run — no changes will be made\n"));
+      }
+
+      const spinner = ora("Scanning for cleanup targets...").start();
+
+      try {
+        const result = await runHousekeeping(project.path, taskStore, {
+          dryRun: opts.dryRun,
+          containers: opts.containers !== false,
+          worktrees: opts.worktrees !== false,
+          branches: opts.branches !== false,
+          maxPlanAgeMs: maxAgeDays * 24 * 60 * 60 * 1000,
+        });
+
+        const verb = opts.dryRun ? "Would remove" : "Removed";
+        const total = result.containers.length + result.worktrees.length +
+          result.branches.local.length + result.branches.remote.length + result.plans.length;
+
+        if (total === 0) {
+          spinner.succeed("Nothing to clean up");
+        } else {
+          spinner.succeed(`${opts.dryRun ? "Found" : "Cleaned up"} ${total} item(s)`);
+        }
+
+        console.log();
+
+        if (result.containers.length > 0) {
+          console.log(`  ${chalk.bold("Containers")} (${result.containers.length}):`);
+          for (const c of result.containers) {
+            console.log(`    ${verb}: ${chalk.dim(c)}`);
+          }
+          console.log();
+        }
+
+        if (result.worktrees.length > 0) {
+          console.log(`  ${chalk.bold("Worktrees")} (${result.worktrees.length}):`);
+          for (const w of result.worktrees) {
+            console.log(`    ${verb}: ${chalk.dim(w)}`);
+          }
+          console.log();
+        }
+
+        if (result.branches.local.length > 0 || result.branches.remote.length > 0) {
+          const branchCount = result.branches.local.length + result.branches.remote.length;
+          console.log(`  ${chalk.bold("Branches")} (${branchCount}):`);
+          for (const b of result.branches.local) {
+            console.log(`    ${verb} local:  ${chalk.dim(b)}`);
+          }
+          for (const b of result.branches.remote) {
+            console.log(`    ${verb} remote: ${chalk.dim(b)}`);
+          }
+          console.log();
+        }
+
+        if (result.plans.length > 0) {
+          console.log(`  ${chalk.bold("Old plans")} (${result.plans.length}):`);
+          for (const p of result.plans) {
+            console.log(`    ${verb}: ${chalk.dim(p)}`);
+          }
+          console.log();
+        }
+
+        if (result.errors.length > 0) {
+          console.log(chalk.red(`  Errors (${result.errors.length}):`));
+          for (const e of result.errors) {
+            console.log(chalk.red(`    ${e}`));
+          }
+          console.log();
+        }
+      } finally {
+        await taskStore.disconnect();
       }
     });
 

@@ -44,3 +44,5 @@ export type {
 } from "./merge-orchestrator.js";
 export { parseGitHubWebhook, handleSecurityWebhook } from "./security-webhook.js";
 export type { WebhookPayload } from "./security-webhook.js";
+export { cleanup as runHousekeeping, DEFAULT_CLEANUP_CONFIG } from "./housekeeping.js";
+export type { CleanupResult, CleanupConfig } from "./housekeeping.js";
