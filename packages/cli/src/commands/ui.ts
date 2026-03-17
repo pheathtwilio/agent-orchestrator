@@ -28,15 +28,34 @@ import { preflight } from "../lib/preflight.js";
 const DEFAULT_PORT = 3000;
 const REDIS_CONTAINER_NAME = "ao-redis";
 const REDIS_PORT = 6379;
+const DOCKER_NETWORK = "ao-network";
 
 /**
- * Ensure a Redis container is running. Starts one if needed.
+ * Ensure the ao-network Docker network exists.
+ * Agent containers and Redis need to be on the same network
+ * so agents can reach Redis via container DNS (redis://ao-redis:6379).
+ */
+async function ensureDockerNetwork(): Promise<void> {
+  const exists = await execSilent("docker", [
+    "network", "inspect", DOCKER_NETWORK,
+  ]);
+  if (exists === null) {
+    await execSilent("docker", ["network", "create", DOCKER_NETWORK]);
+  }
+}
+
+/**
+ * Ensure a Redis container is running on ao-network. Starts one if needed.
  * Returns true if Redis is confirmed available.
  */
 async function ensureRedis(): Promise<boolean> {
   // Check if something is already listening on the Redis port
   const redisAvailable = !(await isPortAvailable(REDIS_PORT));
   if (redisAvailable) {
+    // Ensure the existing Redis container is on ao-network (best effort)
+    await execSilent("docker", [
+      "network", "connect", DOCKER_NETWORK, REDIS_CONTAINER_NAME,
+    ]);
     return true;
   }
 
@@ -45,6 +64,9 @@ async function ensureRedis(): Promise<boolean> {
   if (!hasDocker) {
     return false;
   }
+
+  // Ensure the network exists before creating/starting the container
+  await ensureDockerNetwork();
 
   // Check if container exists but is stopped
   const inspectResult = await execSilent("docker", [
@@ -56,7 +78,10 @@ async function ensureRedis(): Promise<boolean> {
 
   if (inspectResult !== null) {
     if (inspectResult.trim() === "true") {
-      // Container exists and is running — Redis should be available
+      // Container exists and is running — ensure it's on the network
+      await execSilent("docker", [
+        "network", "connect", DOCKER_NETWORK, REDIS_CONTAINER_NAME,
+      ]);
       return true;
     }
     // Container exists but stopped — restart it
@@ -69,12 +94,14 @@ async function ensureRedis(): Promise<boolean> {
     return !(await isPortAvailable(REDIS_PORT));
   }
 
-  // No container exists — create one
+  // No container exists — create one on ao-network
   const result = await execSilent("docker", [
     "run",
     "-d",
     "--name",
     REDIS_CONTAINER_NAME,
+    "--network",
+    DOCKER_NETWORK,
     "-p",
     `${REDIS_PORT}:6379`,
     "--restart",

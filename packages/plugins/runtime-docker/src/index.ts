@@ -174,6 +174,14 @@ export function create(config?: Record<string, unknown>): Runtime {
         }
       }
 
+      // Remove any leftover container with the same name (from a previous
+      // failed/cancelled run) so docker run doesn't fail with "name already in use"
+      try {
+        await docker("rm", "-f", containerName);
+      } catch {
+        // Container doesn't exist — expected path
+      }
+
       // Start container with workspace mounted
       // --init ensures signals propagate correctly to child processes
       await docker(
