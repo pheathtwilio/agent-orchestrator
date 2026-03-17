@@ -400,12 +400,11 @@ export function registerInit(program: Command): void {
         console.log(chalk.bold("Next steps:\n"));
         console.log("  1. Review the config (optional):");
         console.log(chalk.cyan(`     nano ${outputPath}\n`));
-        console.log("  2. Start orchestrator + dashboard:");
-        console.log(chalk.cyan("     ao start\n"));
+        console.log("  2. Launch the web UI (starts Redis + dashboard):");
+        console.log(chalk.cyan("     ao ui\n"));
 
         if (projectId) {
-          console.log("  3. Spawn agent sessions:");
-          console.log(chalk.cyan(`     ao spawn ${projectId} ISSUE-123\n`));
+          console.log("  3. Create plans and execute from the browser\n");
         } else {
           console.log("  3. Add a project to the config:");
           console.log(chalk.cyan(`     nano ${outputPath}\n`));
@@ -560,17 +559,13 @@ async function handleAutoMode(outputPath: string, smart: boolean): Promise<void>
   if (hasPlaceholderRepo) {
     console.log("  1. Edit config and update 'repo' field:");
     console.log(chalk.cyan(`     nano ${outputPath}\n`));
-    console.log("  2. Start orchestrator + dashboard:");
-    console.log(chalk.cyan("     ao start\n"));
-    console.log("  3. Spawn agent sessions:");
-    console.log(chalk.cyan(`     ao spawn ${projectId} ISSUE-123\n`));
+    console.log("  2. Launch the web UI (starts Redis + dashboard):");
+    console.log(chalk.cyan("     ao ui\n"));
+    console.log("  3. Create plans and execute from the browser\n");
   } else {
-    console.log("  1. Review the config (optional):");
-    console.log(chalk.cyan(`     nano ${outputPath}\n`));
-    console.log("  2. Start orchestrator + dashboard:");
-    console.log(chalk.cyan("     ao start\n"));
-    console.log("  3. Spawn agent sessions:");
-    console.log(chalk.cyan(`     ao spawn ${projectId} ISSUE-123\n`));
+    console.log("  1. Launch the web UI (starts Redis + dashboard):");
+    console.log(chalk.cyan("     ao ui\n"));
+    console.log("  2. Create plans and execute from the browser\n");
   }
 
   // Show warnings

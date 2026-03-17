@@ -15,6 +15,7 @@ import { registerVerify } from "./commands/verify.js";
 import { registerDoctor } from "./commands/doctor.js";
 import { registerUpdate } from "./commands/update.js";
 import { registerPlan } from "./commands/plan.js";
+import { registerUI } from "./commands/ui.js";
 
 const program = new Command();
 
@@ -39,5 +40,6 @@ registerVerify(program);
 registerDoctor(program);
 registerUpdate(program);
 registerPlan(program);
+registerUI(program);
 
 program.parse();
