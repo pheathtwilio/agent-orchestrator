@@ -383,9 +383,9 @@ export function registerPlan(program: Command): void {
   plan
     .command("watch <project> <plan-id>")
     .description("Long-running process: subscribe to agent messages, trigger tests, stream events")
-    .option("--no-per-task-test", "Skip per-task test agents (go straight to integration test)")
+    .option("--per-task-test", "Spawn separate test agents per task (default: agents self-test)")
     .option("--follow", "Follow real-time output from all agents")
-    .action(async (projectId: string, planId: string, opts: { perTaskTest: boolean; follow?: boolean }) => {
+    .action(async (projectId: string, planId: string, opts: { perTaskTest?: boolean; follow?: boolean }) => {
       banner("Plan Watch");
 
       const config = loadConfig();

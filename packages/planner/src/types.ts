@@ -67,7 +67,7 @@ export const DEFAULT_PLANNER_CONFIG: PlannerConfig = {
   maxDepth: 3,
   requireApproval: true,
   maxConcurrency: 5,
-  perTaskTesting: true,
+  perTaskTesting: false,
   modelPolicy: {
     planning: "opus",
     implementation: {
