@@ -1,7 +1,7 @@
 import RedisModule from "ioredis";
 const Redis = RedisModule.default ?? RedisModule;
 import { randomUUID } from "node:crypto";
-import type { MessageBus, BusMessage, MessageHandler } from "./types.js";
+import type { MessageBus, BusMessage, MessageHandler, OutputHandler } from "./types.js";
 
 const STREAM_MAX_LEN = 1000;
 const DEFAULT_REDIS_URL = "redis://localhost:6379";
@@ -23,9 +23,13 @@ export function createMessageBus(redisUrl?: string): MessageBus {
   // Separate connections for publishing and subscribing (Redis requirement)
   const pub = new Redis(url, { maxRetriesPerRequest: 3, lazyConnect: true });
   const sub = new Redis(url, { maxRetriesPerRequest: 3, lazyConnect: true });
+  // Dedicated connection for pub/sub output streaming (can't share with XREAD)
+  const outputSub = new Redis(url, { maxRetriesPerRequest: 3, lazyConnect: true });
 
   let connected = false;
+  let outputSubConnected = false;
   const subscriptions = new Map<string, { polling: boolean }>();
+  const outputSubscriptions = new Map<string, OutputHandler>();
 
   async function ensureConnected(): Promise<void> {
     if (!connected) {
@@ -151,17 +155,49 @@ export function createMessageBus(redisUrl?: string): MessageBus {
       }).reverse();
     },
 
+    async subscribeOutput(sessionId: string, handler: OutputHandler): Promise<void> {
+      if (!outputSubConnected) {
+        await outputSub.connect();
+        outputSubConnected = true;
+
+        // Single message handler for all output subscriptions
+        outputSub.on("message", (channel: string, message: string) => {
+          // Extract session ID from channel: ao:output:<sessionId>
+          const sid = channel.replace("ao:output:", "");
+          const h = outputSubscriptions.get(sid);
+          if (h) {
+            try {
+              h(JSON.parse(message));
+            } catch { /* ignore parse errors */ }
+          }
+        });
+      }
+
+      outputSubscriptions.set(sessionId, handler);
+      await outputSub.subscribe(`ao:output:${sessionId}`);
+    },
+
+    async unsubscribeOutput(sessionId: string): Promise<void> {
+      outputSubscriptions.delete(sessionId);
+      if (outputSubConnected) {
+        await outputSub.unsubscribe(`ao:output:${sessionId}`);
+      }
+    },
+
     async disconnect(): Promise<void> {
       // Stop all subscriptions
       for (const [, entry] of subscriptions) {
         entry.polling = false;
       }
       subscriptions.clear();
+      outputSubscriptions.clear();
 
       connected = false;
+      outputSubConnected = false;
       await Promise.all([
         pub.quit().catch(() => pub.disconnect()),
         sub.quit().catch(() => sub.disconnect()),
+        outputSub.quit().catch(() => outputSub.disconnect()),
       ]);
     },
   };

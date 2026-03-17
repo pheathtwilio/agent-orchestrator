@@ -84,6 +84,20 @@ async function publishToOrchestrator(type, payload) {
   }
 }
 
+/** Publish a line of agent output to Redis pub/sub for real-time streaming */
+async function publishOutput(channel, line) {
+  try {
+    await ensureRedis();
+    await redis.publish(channel, JSON.stringify({
+      sessionId: SESSION_ID,
+      timestamp: Date.now(),
+      line,
+    }));
+  } catch {
+    // Non-critical — don't let output streaming failures affect the agent
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Inbox watcher — reads orchestrator messages from /tmp/ao-inbox
 // ---------------------------------------------------------------------------
@@ -151,11 +165,41 @@ function launchAgent() {
 
   console.log(`[sidecar] Launching agent: ${args[0]} ...${args.length > 1 ? ` (${args.length - 1} args)` : ""}`);
 
+  // Capture stdout/stderr and publish lines to Redis pub/sub for real-time streaming.
+  // Also pipe to our own stdout so `docker logs` still works.
   agentProcess = spawn(args[0], args.slice(1), {
     cwd: "/workspace",
-    stdio: "inherit",
+    stdio: ["inherit", "pipe", "pipe"],
     env: process.env,
   });
+
+  const outputChannel = `ao:output:${SESSION_ID}`;
+
+  function streamOutput(stream, label) {
+    let buffer = "";
+    stream.on("data", (chunk) => {
+      const text = chunk.toString();
+      process[label === "stderr" ? "stderr" : "stdout"].write(text);
+
+      // Buffer and publish complete lines
+      buffer += text;
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (line.trim()) {
+          publishOutput(outputChannel, line);
+        }
+      }
+    });
+    stream.on("end", () => {
+      if (buffer.trim()) {
+        publishOutput(outputChannel, buffer);
+      }
+    });
+  }
+
+  if (agentProcess.stdout) streamOutput(agentProcess.stdout, "stdout");
+  if (agentProcess.stderr) streamOutput(agentProcess.stderr, "stderr");
 
   agentProcess.on("exit", async (code, signal) => {
     console.log(`[sidecar] Agent exited with code=${code} signal=${signal}`);

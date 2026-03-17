@@ -61,6 +61,9 @@ export interface TaskResult {
 
 export type MessageHandler = (message: BusMessage) => void | Promise<void>;
 
+/** Handler for real-time agent output lines */
+export type OutputHandler = (data: { sessionId: string; timestamp: number; line: string }) => void;
+
 export interface MessageBus {
   /** Publish a message to a target's inbox */
   publish(message: Omit<BusMessage, "id" | "timestamp">): Promise<string>;
@@ -73,6 +76,12 @@ export interface MessageBus {
 
   /** Get message history for a recipient (from Redis streams) */
   getHistory(recipient: string, count?: number): Promise<BusMessage[]>;
+
+  /** Subscribe to real-time output from an agent session (Redis pub/sub) */
+  subscribeOutput(sessionId: string, handler: OutputHandler): Promise<void>;
+
+  /** Unsubscribe from agent output */
+  unsubscribeOutput(sessionId: string): Promise<void>;
 
   /** Graceful shutdown */
   disconnect(): Promise<void>;

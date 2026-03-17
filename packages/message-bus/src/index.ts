@@ -5,6 +5,8 @@ export type {
   MessageBus,
   BusMessage,
   MessageType,
+  MessageHandler,
+  OutputHandler,
   TaskAssignment,
   TaskResult,
   FileLockRegistry,

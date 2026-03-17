@@ -5,9 +5,11 @@ import { loadConfig } from "@composio/ao-core";
 import {
   createPlanner,
   createMonitor,
+  createTestTrigger,
   DEFAULT_PLANNER_CONFIG,
   type ExecutionPlan,
   type PlannerEvent,
+  type TaskCompletionInfo,
 } from "@composio/ao-planner";
 import {
   createMessageBus,
@@ -377,5 +379,183 @@ export function registerPlan(program: Command): void {
       } finally {
         await fileLocks.disconnect();
       }
+    });
+
+  // ao plan watch <project> <plan-id>
+  plan
+    .command("watch <project> <plan-id>")
+    .description("Long-running process: subscribe to agent messages, trigger tests, stream events")
+    .option("--no-test", "Skip per-task test agents")
+    .option("--follow", "Follow real-time output from all agents")
+    .action(async (projectId: string, planId: string, opts: { test: boolean; follow?: boolean }) => {
+      banner("Plan Watch");
+
+      const config = loadConfig();
+      if (!config.projects[projectId]) {
+        console.error(chalk.red(`Project "${projectId}" not found in config`));
+        process.exit(1);
+      }
+
+      const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
+      const messageBus = createMessageBus(redisUrl);
+      const fileLocks = createFileLockRegistry(redisUrl);
+      const taskStore = createTaskStore(redisUrl);
+      const sm = await getSessionManager(config);
+
+      const spawnSession = async (params: Parameters<typeof sm.spawn>[0] extends infer T ? {
+        projectId: string; taskId: string; prompt: string; branch: string;
+        model: string; skill: string; dockerImage: string;
+        environment: Record<string, string>;
+      } : never) => {
+        const session = await sm.spawn({
+          projectId: params.projectId,
+          prompt: params.prompt,
+          branch: params.branch,
+          runtime: "docker",
+          runtimeConfig: { image: params.dockerImage },
+          environment: {
+            ...params.environment,
+            AO_SKILL: params.skill,
+            AO_MODEL: params.model,
+          },
+        });
+        return session.id;
+      };
+
+      const planner = createPlanner(
+        {
+          messageBus,
+          fileLocks,
+          taskStore,
+          spawnSession,
+          killSession: async (sessionId) => { await sm.kill(sessionId); },
+        },
+      );
+
+      // Load the plan from Redis
+      const planData = await planner.loadPlan(planId, projectId);
+
+      // Set up test trigger
+      const testTrigger = opts.test
+        ? createTestTrigger({ spawnSession }, DEFAULT_PLANNER_CONFIG)
+        : null;
+
+      // Track which sessions we're following output from
+      const followedSessions = new Set<string>();
+
+      planner.onEvent(async (event) => {
+        printEvent(event);
+
+        // Follow output from newly spawned agents
+        if (opts.follow && event.sessionId) {
+          if (event.type === "task_started" && !followedSessions.has(event.sessionId)) {
+            followedSessions.add(event.sessionId);
+            const sid = event.sessionId;
+            await messageBus.subscribeOutput(sid, (data) => {
+              const time = new Date(data.timestamp).toLocaleTimeString();
+              console.log(chalk.dim(`[${time}] ${sid.slice(-8)}`) + ` ${data.line}`);
+            });
+          }
+
+          // Unsubscribe when task completes/fails
+          if ((event.type === "task_complete" || event.type === "task_failed") && event.sessionId) {
+            if (followedSessions.has(event.sessionId)) {
+              followedSessions.delete(event.sessionId);
+              await messageBus.unsubscribeOutput(event.sessionId);
+            }
+          }
+        }
+
+        // Trigger per-task test on completion
+        if (event.type === "task_complete" && event.taskId && testTrigger) {
+          const node = planData.taskGraph.nodes.find((n) => n.id === event.taskId);
+          if (node && node.result) {
+            try {
+              const testSessionId = await testTrigger.triggerTaskTest({
+                planId,
+                projectId,
+                taskId: event.taskId,
+                taskTitle: node.title,
+                skill: node.skill,
+                branch: node.result.branch,
+                commits: node.result.commits,
+                summary: node.result.summary,
+                fileBoundary: node.fileBoundary,
+                acceptanceCriteria: node.acceptanceCriteria,
+              });
+              console.log(chalk.magenta(`  [test] Spawned test agent ${testSessionId} for task ${event.taskId}`));
+            } catch (err) {
+              console.error(chalk.yellow(`  [test] Failed to spawn test agent: ${err instanceof Error ? err.message : err}`));
+            }
+          }
+        }
+
+        // Exit when plan completes or fails
+        if (event.type === "plan_complete" || event.type === "plan_failed") {
+          console.log();
+          if (event.type === "plan_complete") {
+            console.log(chalk.green.bold("  Plan complete!"));
+          } else {
+            console.log(chalk.red.bold("  Plan failed."));
+          }
+          cleanup();
+        }
+      });
+
+      // Subscribe to orchestrator inbox
+      console.log(chalk.dim(`  Watching plan ${planId}...`));
+      console.log(chalk.dim(`  Press Ctrl+C to stop\n`));
+
+      await messageBus.subscribe("orchestrator", async (message) => {
+        await planner.handleMessage(message);
+      });
+
+      // Graceful shutdown
+      let shuttingDown = false;
+      async function cleanup() {
+        if (shuttingDown) return;
+        shuttingDown = true;
+
+        // Unsubscribe from all output streams
+        for (const sid of followedSessions) {
+          await messageBus.unsubscribeOutput(sid).catch(() => {});
+        }
+
+        await messageBus.disconnect();
+        await fileLocks.disconnect();
+        await taskStore.disconnect();
+        process.exit(0);
+      }
+
+      process.on("SIGINT", cleanup);
+      process.on("SIGTERM", cleanup);
+    });
+
+  // ao plan logs <session-id>
+  plan
+    .command("logs <session-id>")
+    .description("Stream real-time output from an agent session")
+    .action(async (sessionId: string) => {
+      banner("Agent Logs");
+
+      const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
+      const messageBus = createMessageBus(redisUrl);
+
+      console.log(chalk.dim(`  Streaming output from ${sessionId}...`));
+      console.log(chalk.dim(`  Press Ctrl+C to stop\n`));
+
+      await messageBus.subscribeOutput(sessionId, (data) => {
+        const time = new Date(data.timestamp).toLocaleTimeString();
+        console.log(chalk.dim(`[${time}]`) + ` ${data.line}`);
+      });
+
+      async function cleanup() {
+        await messageBus.unsubscribeOutput(sessionId);
+        await messageBus.disconnect();
+        process.exit(0);
+      }
+
+      process.on("SIGINT", cleanup);
+      process.on("SIGTERM", cleanup);
     });
 }

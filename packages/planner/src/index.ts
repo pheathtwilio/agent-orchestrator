@@ -2,6 +2,7 @@ export { createPlanner } from "./planner.js";
 export { classifyTask, resolveModel, modelTierToId } from "./skill-classifier.js";
 export { createMonitor, DEFAULT_MONITOR_CONFIG } from "./monitor.js";
 export { createSecurityTrigger, DEFAULT_SECURITY_TRIGGER_CONFIG } from "./security-trigger.js";
+export { createTestTrigger } from "./test-trigger.js";
 export { DEFAULT_PLANNER_CONFIG } from "./types.js";
 export type {
   Planner,
@@ -30,3 +31,8 @@ export type {
   SecurityTriggerDeps,
   WebhookSecurityEvent,
 } from "./security-trigger.js";
+export type {
+  TestTrigger,
+  TestTriggerDeps,
+  TaskCompletionInfo,
+} from "./test-trigger.js";

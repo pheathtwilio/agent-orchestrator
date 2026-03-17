@@ -534,7 +534,15 @@ export function createPlanner(
 
           // Check if all tasks are complete
           const allComplete = plan.taskGraph.nodes.every((n) => n.status === "complete");
-          if (allComplete) {
+          if (taskId === "integration-test") {
+            // Integration test completed — mark plan as complete
+            emit({
+              type: "plan_complete",
+              planId,
+              detail: "All tasks and integration tests passed",
+            });
+            plan.phase = "complete";
+          } else if (allComplete && plan.phase === "executing") {
             await spawnTestingAgent(plan);
           } else {
             // Spawn any newly unblocked tasks
@@ -568,6 +576,17 @@ export function createPlanner(
             sessionId: message.from,
             detail: `Task failed: ${error}`,
           });
+
+          // Integration test failure → plan failed
+          if (taskId === "integration-test") {
+            emit({
+              type: "plan_failed",
+              planId,
+              detail: `Integration test failed: ${error}`,
+            });
+            plan.phase = "failed";
+            break;
+          }
 
           // Reassign: reset to pending so it gets picked up again
           await deps.taskStore.updateTask(plan.taskGraph.id, taskId, {
