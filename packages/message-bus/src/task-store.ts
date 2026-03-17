@@ -130,6 +130,22 @@ export function createTaskStore(redisUrl?: string): TaskStore {
       return deleted > 0;
     },
 
+    async archiveGraph(graphId: string): Promise<void> {
+      await ensureConnected();
+      await redis.sadd("ao:archived", graphId);
+    },
+
+    async unarchiveGraph(graphId: string): Promise<void> {
+      await ensureConnected();
+      await redis.srem("ao:archived", graphId);
+    },
+
+    async listArchivedIds(): Promise<Set<string>> {
+      await ensureConnected();
+      const ids = await redis.smembers("ao:archived");
+      return new Set(ids);
+    },
+
     async getUsage(planId: string): Promise<PlanUsage> {
       await ensureConnected();
       const data = await redis.hgetall(`ao:usage:${planId}`);

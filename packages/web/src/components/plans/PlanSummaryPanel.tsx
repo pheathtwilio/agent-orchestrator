@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, memo } from "react";
+import { useEffect, useState, useRef, memo } from "react";
 import { cn } from "@/lib/cn";
 
 interface PlanSummaryData {
@@ -38,6 +38,7 @@ interface PlanSummaryData {
 
 interface PlanSummaryPanelProps {
   planId: string;
+  isTerminal?: boolean;
 }
 
 function formatDuration(ms: number): string {
@@ -62,33 +63,60 @@ const OUTCOME_STYLES = {
   cancelled: { bg: "bg-zinc-500/10", border: "border-zinc-700/50", text: "text-zinc-400", label: "Cancelled" },
 };
 
-export const PlanSummaryPanel = memo(function PlanSummaryPanel({ planId }: PlanSummaryPanelProps) {
+export const PlanSummaryPanel = memo(function PlanSummaryPanel({ planId, isTerminal }: PlanSummaryPanelProps) {
   const [summary, setSummary] = useState<PlanSummaryData | null>(null);
   const [loading, setLoading] = useState(true);
+  const pollRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+
+    async function fetchSummary(refresh = false) {
       try {
-        const res = await fetch(`/api/plans/${planId}/summary`);
+        const url = `/api/plans/${planId}/summary${refresh ? "?refresh=true" : ""}`;
+        const res = await fetch(url);
         if (!res.ok) return;
         const data = await res.json();
-        if (!cancelled) setSummary(data.summary ?? null);
+        if (!cancelled) {
+          setSummary(data.summary ?? null);
+          setLoading(false);
+        }
       } catch {
-        // Summary not available
-      } finally {
         if (!cancelled) setLoading(false);
       }
-    })();
-    return () => { cancelled = true; };
-  }, [planId]);
+    }
+
+    // Initial fetch (always refresh to get latest data)
+    fetchSummary(true);
+
+    // Poll every 10s while the plan is still running
+    if (!isTerminal) {
+      pollRef.current = setInterval(() => fetchSummary(true), 10_000);
+    }
+
+    return () => {
+      cancelled = true;
+      clearInterval(pollRef.current);
+    };
+  }, [planId, isTerminal]);
+
+  // Re-fetch when plan becomes terminal
+  useEffect(() => {
+    if (isTerminal) {
+      clearInterval(pollRef.current);
+      fetch(`/api/plans/${planId}/summary?refresh=true`)
+        .then((r) => r.json())
+        .then((data) => setSummary(data.summary ?? null))
+        .catch(() => {});
+    }
+  }, [isTerminal, planId]);
 
   if (loading) {
     return <div className="text-zinc-600 text-xs py-4 text-center">Loading summary...</div>;
   }
 
   if (!summary) {
-    return <div className="text-zinc-600 text-xs py-4 text-center">Summary not available.</div>;
+    return <div className="text-zinc-600 text-xs py-4 text-center">Summary not available yet. It will appear once the plan completes.</div>;
   }
 
   const style = OUTCOME_STYLES[summary.outcome];

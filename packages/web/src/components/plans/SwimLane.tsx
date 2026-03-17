@@ -55,7 +55,6 @@ export const SwimLane = memo(function SwimLane({
   const isDone = task.status === "complete";
   const isFailed = task.status === "failed";
 
-  // Get the last few output lines for this session
   const sessionLines = task.assignedTo
     ? outputLines.filter((l) => l.sessionId === task.assignedTo).slice(-8)
     : [];
@@ -87,7 +86,7 @@ export const SwimLane = memo(function SwimLane({
         {/* Skill badge */}
         <span
           className={cn(
-            "text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded",
+            "text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded flex-shrink-0",
             skill.bg,
             skill.text,
           )}
@@ -95,17 +94,22 @@ export const SwimLane = memo(function SwimLane({
           {task.skill}
         </span>
 
-        {/* Task title */}
-        <span className="text-sm text-zinc-200 truncate flex-1">{task.title}</span>
+        {/* Task title + description */}
+        <div className="flex-1 min-w-0">
+          <span className="text-sm text-zinc-200 block truncate">{task.title}</span>
+          {task.description && (
+            <span className="text-[11px] text-zinc-500 block truncate">{task.description}</span>
+          )}
+        </div>
 
         {/* Status label */}
-        <span className="text-xs text-zinc-500 whitespace-nowrap">
+        <span className="text-xs text-zinc-500 whitespace-nowrap flex-shrink-0">
           {task.status.replace("_", " ")}
         </span>
 
         {/* Cost badge */}
         {sessionUsage && sessionUsage.costUsd > 0 && (
-          <span className="text-[10px] text-zinc-500 font-mono whitespace-nowrap">
+          <span className="text-[10px] text-zinc-500 font-mono whitespace-nowrap flex-shrink-0">
             {formatCost(sessionUsage.costUsd)}
           </span>
         )}
@@ -127,6 +131,20 @@ export const SwimLane = memo(function SwimLane({
       {/* Expanded detail */}
       {expanded && (
         <div className="border-t border-zinc-800/50 p-3 space-y-3">
+          {/* File boundary */}
+          {task.fileBoundary && task.fileBoundary.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {task.fileBoundary.map((f) => (
+                <span
+                  key={f}
+                  className="text-[10px] font-mono text-zinc-500 bg-zinc-800/60 px-1.5 py-0.5 rounded"
+                >
+                  {f}
+                </span>
+              ))}
+            </div>
+          )}
+
           {/* Metadata row */}
           <div className="flex flex-wrap gap-3 text-xs text-zinc-500">
             <span>

@@ -7,12 +7,14 @@ import { useEffect, useRef, useState, useCallback } from "react";
 export interface PlanTask {
   id: string;
   title: string;
+  description: string;
   status: string;
   skill: string;
   model: string;
   assignedTo: string | null;
   branch: string | null;
   dependsOn: string[];
+  fileBoundary: string[];
   updatedAt: number;
 }
 

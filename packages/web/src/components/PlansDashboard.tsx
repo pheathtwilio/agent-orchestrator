@@ -3,14 +3,16 @@
 import { useEffect, useState, useCallback } from "react";
 import { cn } from "@/lib/cn";
 import { usePlanEvents } from "@/hooks/usePlanEvents";
+import type { PlanTask } from "@/hooks/usePlanEvents";
 import { SwimLane } from "./plans/SwimLane";
 import { TaskQueueLog } from "./plans/TaskQueueLog";
 import { PlanSummaryPanel } from "./plans/PlanSummaryPanel";
 import { UsageBanner } from "./plans/UsageBanner";
+import { CreatePlanForm } from "./plans/CreatePlanForm";
 
 // ── Types ──
 
-interface PlanSummary {
+interface PlanListItem {
   id: string;
   featureId: string;
   title: string;
@@ -22,6 +24,7 @@ interface PlanSummary {
   progressPercent: number;
   createdAt: number;
   updatedAt: number;
+  archived?: boolean;
 }
 
 interface FileLock {
@@ -67,10 +70,29 @@ function ConnectionDot({ connected }: { connected: boolean }) {
   );
 }
 
+/** Group tasks by status category for the swim lane view */
+function groupTasks(tasks: PlanTask[]) {
+  const active: PlanTask[] = [];
+  const waiting: PlanTask[] = [];
+  const done: PlanTask[] = [];
+
+  for (const t of tasks) {
+    if (["assigned", "in_progress", "testing"].includes(t.status)) {
+      active.push(t);
+    } else if (["pending", "blocked"].includes(t.status)) {
+      waiting.push(t);
+    } else {
+      done.push(t);
+    }
+  }
+
+  return { active, waiting, done };
+}
+
 // ── Main Component ──
 
 export function PlansDashboard() {
-  const [plans, setPlans] = useState<PlanSummary[]>([]);
+  const [plans, setPlans] = useState<PlanListItem[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [locks, setLocks] = useState<FileLock[]>([]);
   const [deadlocks, setDeadlocks] = useState<string[][]>([]);
@@ -78,6 +100,8 @@ export function PlansDashboard() {
   const [followOutput, setFollowOutput] = useState(false);
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<"lanes" | "log" | "summary">("lanes");
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
 
   // SSE connection for the selected plan
   const { snapshot, messages, outputLines, connected } = usePlanEvents(
@@ -85,17 +109,17 @@ export function PlansDashboard() {
     followOutput,
   );
 
-  // Fetch plan list (still polled since it's a lightweight list endpoint)
   const fetchPlans = useCallback(async () => {
     try {
-      const res = await fetch("/api/plans");
+      const url = showArchived ? "/api/plans?include=archived" : "/api/plans";
+      const res = await fetch(url);
       const data = await res.json();
       setPlans(data.plans ?? []);
     } catch {
       // Retry next poll
     }
     setLoading(false);
-  }, []);
+  }, [showArchived]);
 
   const fetchLocks = useCallback(async () => {
     try {
@@ -118,7 +142,18 @@ export function PlansDashboard() {
     return () => clearInterval(interval);
   }, [fetchPlans, fetchLocks]);
 
-  // Derive plan detail from SSE snapshot when available
+  async function archivePlan(planId: string) {
+    await fetch(`/api/plans/${planId}/archive`, { method: "POST" });
+    fetchPlans();
+    if (selectedPlanId === planId) setSelectedPlanId(null);
+  }
+
+  async function unarchivePlan(planId: string) {
+    await fetch(`/api/plans/${planId}/archive`, { method: "DELETE" });
+    fetchPlans();
+  }
+
+  // Derive plan detail from SSE snapshot
   const planDetail = snapshot
     ? {
         id: snapshot.plan.id,
@@ -130,10 +165,11 @@ export function PlansDashboard() {
       }
     : null;
 
-  // Determine if plan is in a terminal state
   const isTerminal = planDetail
     ? planDetail.tasks.every((t) => ["complete", "failed"].includes(t.status))
     : false;
+
+  const groups = planDetail ? groupTasks(planDetail.tasks) : null;
 
   function toggleTask(taskId: string) {
     setExpandedTasks((prev) => {
@@ -157,7 +193,15 @@ export function PlansDashboard() {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">Plan Orchestrator</h1>
-        {selectedPlanId && <ConnectionDot connected={connected} />}
+        <div className="flex items-center gap-3">
+          {selectedPlanId && <ConnectionDot connected={connected} />}
+          <button
+            onClick={() => setShowCreateForm(true)}
+            className="px-3 py-1.5 rounded-md text-xs font-medium bg-cyan-600 text-white hover:bg-cyan-500 transition-colors"
+          >
+            + New Plan
+          </button>
+        </div>
       </div>
 
       {/* Deadlock warning */}
@@ -172,51 +216,108 @@ export function PlansDashboard() {
         </div>
       )}
 
+      {/* Create plan modal */}
+      {showCreateForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 w-full max-w-lg shadow-2xl">
+            <h2 className="text-lg font-semibold text-zinc-200 mb-4">Create Plan</h2>
+            <CreatePlanForm
+              onCreated={(planId) => {
+                setShowCreateForm(false);
+                setSelectedPlanId(planId);
+                fetchPlans();
+              }}
+              onCancel={() => setShowCreateForm(false)}
+            />
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* ── Left sidebar: Plan list + locks ── */}
         <div className="lg:col-span-1 space-y-6">
           <div>
-            <h2 className="text-sm font-semibold mb-3 text-zinc-400 uppercase tracking-wider">
-              Plans
-            </h2>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-sm font-semibold text-zinc-400 uppercase tracking-wider">
+                Plans
+              </h2>
+              <button
+                onClick={() => setShowArchived(!showArchived)}
+                className={cn(
+                  "text-[10px] transition-colors",
+                  showArchived ? "text-cyan-500" : "text-zinc-600 hover:text-zinc-400",
+                )}
+              >
+                {showArchived ? "Hide archived" : "Show archived"}
+              </button>
+            </div>
+
             {plans.length === 0 ? (
               <p className="text-zinc-600 text-xs">
-                No active plans. Use{" "}
-                <code className="bg-zinc-800 px-1 rounded text-zinc-400">ao plan create</code> to
-                start.
+                No plans yet. Click{" "}
+                <button
+                  onClick={() => setShowCreateForm(true)}
+                  className="text-cyan-500 hover:text-cyan-400"
+                >
+                  + New Plan
+                </button>{" "}
+                to start.
               </p>
             ) : (
               <div className="space-y-2">
                 {plans.map((plan) => (
-                  <button
+                  <div
                     key={plan.id}
-                    onClick={() => {
-                      setSelectedPlanId(plan.id);
-                      setActiveTab("lanes");
-                    }}
                     className={cn(
-                      "w-full text-left p-3 rounded-lg border transition-all",
+                      "rounded-lg border transition-all group",
+                      plan.archived && "opacity-50",
                       selectedPlanId === plan.id
                         ? "bg-zinc-800/80 border-cyan-700/60"
                         : "bg-zinc-900/50 border-zinc-800 hover:border-zinc-700",
                     )}
                   >
-                    <div className="flex justify-between items-start mb-2">
-                      <span className="text-xs font-medium text-zinc-200 leading-tight">
-                        {plan.title}
-                      </span>
-                      <span className="text-[10px] text-zinc-500 ml-2 whitespace-nowrap">
-                        {plan.progressPercent}%
-                      </span>
+                    <button
+                      onClick={() => {
+                        setSelectedPlanId(plan.id);
+                        setActiveTab("lanes");
+                      }}
+                      className="w-full text-left p-3"
+                    >
+                      <div className="flex justify-between items-start mb-2">
+                        <span className="text-xs font-medium text-zinc-200 leading-tight">
+                          {plan.title}
+                        </span>
+                        <span className="text-[10px] text-zinc-500 ml-2 whitespace-nowrap">
+                          {plan.progressPercent}%
+                        </span>
+                      </div>
+                      <ProgressBar percent={plan.progressPercent} />
+                      <div className="flex gap-2 mt-1.5 text-[10px] text-zinc-600">
+                        <span className="text-green-500">{plan.complete}</span>
+                        <span className="text-cyan-500">{plan.inProgress}</span>
+                        <span>{plan.pending}</span>
+                        {plan.failed > 0 && <span className="text-red-500">{plan.failed}</span>}
+                      </div>
+                    </button>
+                    {/* Archive/unarchive button */}
+                    <div className="px-3 pb-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {plan.archived ? (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); unarchivePlan(plan.id); }}
+                          className="text-[10px] text-zinc-500 hover:text-zinc-300"
+                        >
+                          Unarchive
+                        </button>
+                      ) : (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); archivePlan(plan.id); }}
+                          className="text-[10px] text-zinc-500 hover:text-zinc-300"
+                        >
+                          Archive
+                        </button>
+                      )}
                     </div>
-                    <ProgressBar percent={plan.progressPercent} />
-                    <div className="flex gap-2 mt-1.5 text-[10px] text-zinc-600">
-                      <span className="text-green-500">{plan.complete}</span>
-                      <span className="text-cyan-500">{plan.inProgress}</span>
-                      <span>{plan.pending}</span>
-                      {plan.failed > 0 && <span className="text-red-500">{plan.failed}</span>}
-                    </div>
-                  </button>
+                  </div>
                 ))}
               </div>
             )}
@@ -247,7 +348,7 @@ export function PlansDashboard() {
 
         {/* ── Main content area ── */}
         <div className="lg:col-span-3">
-          {planDetail ? (
+          {planDetail && groups ? (
             <div className="space-y-4">
               {/* Plan header */}
               <div className="flex items-center justify-between">
@@ -298,21 +399,77 @@ export function PlansDashboard() {
 
               {/* Tab content */}
               {activeTab === "lanes" && (
-                <div className="space-y-2">
-                  {planDetail.tasks.map((task) => (
-                    <SwimLane
-                      key={task.id}
-                      task={task}
-                      sessionUsage={
-                        task.assignedTo && snapshot?.sessionUsage
-                          ? snapshot.sessionUsage[task.assignedTo]
-                          : undefined
-                      }
-                      outputLines={outputLines}
-                      expanded={expandedTasks.has(task.id)}
-                      onToggle={() => toggleTask(task.id)}
-                    />
-                  ))}
+                <div className="space-y-5">
+                  {/* Active agents group */}
+                  {groups.active.length > 0 && (
+                    <TaskGroup
+                      label="Active"
+                      count={groups.active.length}
+                      color="text-cyan-400"
+                      dotColor="bg-cyan-400"
+                    >
+                      {groups.active.map((task) => (
+                        <SwimLane
+                          key={task.id}
+                          task={task}
+                          sessionUsage={
+                            task.assignedTo && snapshot?.sessionUsage
+                              ? snapshot.sessionUsage[task.assignedTo]
+                              : undefined
+                          }
+                          outputLines={outputLines}
+                          expanded={expandedTasks.has(task.id)}
+                          onToggle={() => toggleTask(task.id)}
+                        />
+                      ))}
+                    </TaskGroup>
+                  )}
+
+                  {/* Waiting group */}
+                  {groups.waiting.length > 0 && (
+                    <TaskGroup
+                      label="Waiting"
+                      count={groups.waiting.length}
+                      color="text-zinc-500"
+                      dotColor="bg-zinc-500"
+                    >
+                      {groups.waiting.map((task) => (
+                        <SwimLane
+                          key={task.id}
+                          task={task}
+                          outputLines={outputLines}
+                          expanded={expandedTasks.has(task.id)}
+                          onToggle={() => toggleTask(task.id)}
+                        />
+                      ))}
+                    </TaskGroup>
+                  )}
+
+                  {/* Completed group */}
+                  {groups.done.length > 0 && (
+                    <TaskGroup
+                      label="Finished"
+                      count={groups.done.length}
+                      color="text-zinc-600"
+                      dotColor="bg-green-500"
+                      defaultCollapsed
+                    >
+                      {groups.done.map((task) => (
+                        <SwimLane
+                          key={task.id}
+                          task={task}
+                          sessionUsage={
+                            task.assignedTo && snapshot?.sessionUsage
+                              ? snapshot.sessionUsage[task.assignedTo]
+                              : undefined
+                          }
+                          outputLines={outputLines}
+                          expanded={expandedTasks.has(task.id)}
+                          onToggle={() => toggleTask(task.id)}
+                        />
+                      ))}
+                    </TaskGroup>
+                  )}
                 </div>
               )}
 
@@ -323,7 +480,7 @@ export function PlansDashboard() {
               )}
 
               {activeTab === "summary" && (
-                <PlanSummaryPanel planId={planDetail.id} />
+                <PlanSummaryPanel planId={planDetail.id} isTerminal={isTerminal} />
               )}
 
               {/* Terminal state banner */}
@@ -339,8 +496,14 @@ export function PlansDashboard() {
               )}
             </div>
           ) : (
-            <div className="flex items-center justify-center h-64 text-zinc-600 text-sm">
-              Select a plan to view real-time progress
+            <div className="flex flex-col items-center justify-center h-64 text-zinc-600 text-sm gap-3">
+              <span>Select a plan to view real-time progress</span>
+              <button
+                onClick={() => setShowCreateForm(true)}
+                className="text-xs text-cyan-500 hover:text-cyan-400"
+              >
+                or create a new plan
+              </button>
             </div>
           )}
         </div>
@@ -349,7 +512,52 @@ export function PlansDashboard() {
   );
 }
 
-// ── Tab Button ──
+// ── Sub-components ──
+
+function TaskGroup({
+  label,
+  count,
+  color,
+  dotColor,
+  defaultCollapsed = false,
+  children,
+}: {
+  label: string;
+  count: number;
+  color: string;
+  dotColor: string;
+  defaultCollapsed?: boolean;
+  children: React.ReactNode;
+}) {
+  const [collapsed, setCollapsed] = useState(defaultCollapsed);
+
+  return (
+    <div>
+      <button
+        onClick={() => setCollapsed(!collapsed)}
+        className="flex items-center gap-2 mb-2 group"
+      >
+        <span className={cn("w-2 h-2 rounded-full", dotColor)} />
+        <span className={cn("text-xs font-semibold uppercase tracking-wider", color)}>
+          {label}
+        </span>
+        <span className="text-[10px] text-zinc-600 font-mono">{count}</span>
+        <svg
+          className={cn(
+            "w-3 h-3 text-zinc-600 transition-transform",
+            collapsed && "-rotate-90",
+          )}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      {!collapsed && <div className="space-y-2">{children}</div>}
+    </div>
+  );
+}
 
 function TabButton({
   active,

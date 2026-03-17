@@ -61,7 +61,7 @@ export const TaskQueueLog = memo(function TaskQueueLog({
 
         return (
           <div
-            key={msg.id}
+            key={`${msg.id}-${msg.timestamp}`}
             className="flex items-start gap-2 py-1 px-2 rounded hover:bg-zinc-800/30 transition-colors text-[11px]"
           >
             {/* Timestamp */}

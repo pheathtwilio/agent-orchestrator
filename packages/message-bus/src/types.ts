@@ -181,6 +181,15 @@ export interface TaskStore {
   /** Get token usage for a plan (all sessions) */
   getUsage(planId: string): Promise<PlanUsage>;
 
+  /** Archive a plan (hide from default list) */
+  archiveGraph(graphId: string): Promise<void>;
+
+  /** Unarchive a plan */
+  unarchiveGraph(graphId: string): Promise<void>;
+
+  /** Get set of archived graph IDs */
+  listArchivedIds(): Promise<Set<string>>;
+
   /** Graceful shutdown */
   disconnect(): Promise<void>;
 }
