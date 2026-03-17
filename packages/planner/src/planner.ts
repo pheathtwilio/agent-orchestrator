@@ -327,7 +327,9 @@ export function createPlanner(
     plan.phase = "testing";
     plan.updatedAt = Date.now();
 
-    const completedTasks = plan.taskGraph.nodes.filter((n) => n.status === "complete");
+    const completedTasks = plan.taskGraph.nodes.filter((n) =>
+      n.status === "complete" && n.id !== "integration-test" && n.id !== "verify-build",
+    );
     const branches = completedTasks
       .map((t) => t.branch)
       .filter((b): b is string => b !== null);
@@ -349,6 +351,24 @@ export function createPlanner(
       `6. Write additional integration tests if the existing suite doesn't cover the new feature`,
     ].join("\n");
 
+    // Add a visible node to the graph so it appears in the UI
+    const testNode: BusTaskNode = {
+      id: "integration-test",
+      title: "Integration Test",
+      description: "Merge all completed branches and run the full test suite",
+      acceptanceCriteria: [],
+      fileBoundary: [],
+      status: "in_progress",
+      assignedTo: null,
+      model: modelTierToId(cfg.modelPolicy.testing),
+      skill: "testing",
+      dependsOn: completedTasks.map((t) => t.id),
+      branch: `test/${plan.id}/integration`,
+      result: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+
     try {
       const sessionId = await deps.spawnSession({
         projectId: plan.projectId,
@@ -365,6 +385,10 @@ export function createPlanner(
           AO_SKILL: "testing",
         },
       });
+
+      testNode.assignedTo = sessionId;
+      await deps.taskStore.addNode(plan.taskGraph.id, testNode);
+      plan.taskGraph.nodes.push(testNode);
 
       plan.activeSessions.set("integration-test", sessionId);
       sessionActivity.set(sessionId, Date.now());
@@ -386,16 +410,189 @@ export function createPlanner(
     }
   }
 
-  /** Either spawn integration test or complete the plan directly */
-  async function finalizePlan(plan: ExecutionPlan): Promise<void> {
-    if (cfg.skipIntegrationTest) {
+  /** Spawn a verify agent that checks build, tests, cleanup, and provides a summary */
+  async function spawnVerifyAgent(plan: ExecutionPlan): Promise<void> {
+    plan.phase = "verifying";
+    plan.updatedAt = Date.now();
+
+    const implementationTasks = plan.taskGraph.nodes.filter((n) =>
+      n.id !== "integration-test" && n.id !== "verify-build",
+    );
+    const branches = implementationTasks
+      .map((t) => t.branch)
+      .filter((b): b is string => b !== null);
+
+    const taskSummaries = implementationTasks
+      .map((t) => `- ${t.title} (${t.status})${t.result?.summary ? `: ${t.result.summary}` : ""}`)
+      .join("\n");
+
+    const testNode = plan.taskGraph.nodes.find((n) => n.id === "integration-test");
+    const testResult = testNode?.result?.summary ?? (cfg.skipIntegrationTest ? "skipped" : "N/A");
+
+    const verifyPrompt = [
+      `# Verify Build`,
+      "",
+      `## Feature: ${plan.featureDescription}`,
+      "",
+      `## Task Summary`,
+      taskSummaries,
+      "",
+      `## Integration Test Result: ${testResult}`,
+      "",
+      `## Branches`,
+      ...branches.map((b) => `- ${b}`),
+      "",
+      `## Instructions`,
+      `You are the final verification agent. Your job is to ensure the plan was executed correctly.`,
+      `If any check fails, report TASK_FAILED with a clear explanation. If all checks pass, report TASK_COMPLETE.`,
+      "",
+      `1. **Verify Build**: Ensure the code compiles/builds without errors.`,
+      `   - Pull/checkout the implementation branches and merge them.`,
+      `   - Run the build command (e.g. npm run build, pnpm build, make, etc.).`,
+      `   - If the build fails, report TASK_FAILED immediately.`,
+      "",
+      `2. **Verify Tests**: Run the test suite and confirm tests pass.`,
+      `   - Run the project test command (e.g. npm test, pnpm test, etc.).`,
+      `   - If tests fail, report TASK_FAILED with which tests broke.`,
+      `   - If integration testing was skipped, run the tests yourself.`,
+      "",
+      `3. **Verify Implementation**: Review the changes against the feature description.`,
+      `   - Check that the feature was actually implemented (not just scaffolded).`,
+      `   - Look for obvious issues: missing error handling, broken imports, placeholder code.`,
+      "",
+      `4. **Summary**: Provide a structured report in your completion message:`,
+      `   - Build status: pass/fail`,
+      `   - Test status: pass/fail (with count if available)`,
+      `   - Implementation quality: brief assessment`,
+      `   - Any warnings or follow-up items`,
+      "",
+      `NOTE: Container and worktree cleanup is handled automatically by the orchestrator.`,
+      `You do NOT need to clean up Docker containers or git worktrees.`,
+    ].join("\n");
+
+    // Add a visible node to the graph
+    const verifyNode: BusTaskNode = {
+      id: "verify-build",
+      title: "Verify Build",
+      description: "Final verification: build check, test confirmation, cleanup, and qualitative summary",
+      acceptanceCriteria: [],
+      fileBoundary: [],
+      status: "in_progress",
+      assignedTo: null,
+      model: modelTierToId(cfg.modelPolicy.testing),
+      skill: "testing",
+      dependsOn: implementationTasks
+        .filter((t) => t.status === "complete")
+        .map((t) => t.id),
+      branch: `verify/${plan.id}`,
+      result: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+
+    try {
+      const sessionId = await deps.spawnSession({
+        projectId: plan.projectId,
+        taskId: `${plan.id}-verify`,
+        prompt: verifyPrompt,
+        branch: `verify/${plan.id}`,
+        model: modelTierToId(cfg.modelPolicy.testing),
+        skill: "testing",
+        dockerImage: cfg.imageMap.testing,
+        environment: {
+          AO_PLAN_ID: plan.id,
+          AO_TASK_ID: "verify-build",
+          AO_MODEL: modelTierToId(cfg.modelPolicy.testing),
+          AO_SKILL: "testing",
+        },
+      });
+
+      verifyNode.assignedTo = sessionId;
+      await deps.taskStore.addNode(plan.taskGraph.id, verifyNode);
+      plan.taskGraph.nodes.push(verifyNode);
+
+      plan.activeSessions.set("verify-build", sessionId);
+      sessionActivity.set(sessionId, Date.now());
+
+      emit({
+        type: "verify_started",
+        planId: plan.id,
+        sessionId,
+        detail: "Spawned verify agent for final build verification",
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      emit({
+        type: "verify_failed",
+        planId: plan.id,
+        detail: `Failed to spawn verify agent: ${msg}`,
+      });
+      // Still mark complete — verify is best-effort, don't block completion
       plan.phase = "complete";
       plan.updatedAt = Date.now();
       emit({
         type: "plan_complete",
         planId: plan.id,
-        detail: "All tasks complete (integration test skipped)",
+        detail: "All tasks complete (verify agent failed to spawn)",
       });
+    }
+  }
+
+  /**
+   * Clean up all plan resources: kill agent containers (which also removes
+   * worktrees via sessionManager.kill) and release file locks.
+   *
+   * sessionManager.kill() handles both:
+   *   - Runtime destruction (stops + removes Docker container)
+   *   - Workspace destruction (removes git worktree)
+   */
+  async function cleanupPlanResources(plan: ExecutionPlan): Promise<void> {
+    const killed: string[] = [];
+    const cleaned = new Set<string>();
+
+    // Kill all sessions still tracked as active
+    for (const [taskId, sessionId] of plan.activeSessions) {
+      if (cleaned.has(sessionId)) continue;
+      try {
+        await deps.killSession(sessionId);
+        killed.push(sessionId);
+      } catch {
+        // Container/worktree may already be gone
+      }
+      cleaned.add(sessionId);
+      await deps.fileLocks.releaseAll(taskId);
+    }
+
+    // Also kill sessions from completed/failed tasks whose containers
+    // may still be running (Docker containers persist until explicitly stopped)
+    for (const node of plan.taskGraph.nodes) {
+      if (node.assignedTo && !cleaned.has(node.assignedTo)) {
+        try {
+          await deps.killSession(node.assignedTo);
+          killed.push(node.assignedTo);
+        } catch {
+          // Container/worktree may already be gone
+        }
+        cleaned.add(node.assignedTo);
+      }
+    }
+
+    plan.activeSessions.clear();
+
+    if (killed.length > 0) {
+      emit({
+        type: "plan_complete",
+        planId: plan.id,
+        detail: `Cleaned up ${killed.length} agent session(s) (containers + worktrees)`,
+      });
+    }
+  }
+
+  /** Finalize: run integration test if enabled, then always run verify */
+  async function finalizePlan(plan: ExecutionPlan): Promise<void> {
+    if (cfg.skipIntegrationTest) {
+      // Skip testing, go straight to verify
+      await spawnVerifyAgent(plan);
     } else {
       await spawnTestingAgent(plan);
     }
@@ -547,24 +744,78 @@ export function createPlanner(
           const isIntegrationTest = taskId === "integration-test";
           const parentTaskId = isPerTaskTest ? taskId.replace(/-test$/, "") : null;
 
-          if (isIntegrationTest) {
-            // ── Integration test passed → plan complete ──
+          if (taskId === "verify-build") {
+            // ── Verify build passed → plan complete ──
             plan.activeSessions.delete(taskId);
             plan.updatedAt = Date.now();
 
+            const verifyNode = plan.taskGraph.nodes.find((n) => n.id === "verify-build");
+            if (verifyNode) {
+              verifyNode.status = "complete";
+              verifyNode.result = {
+                taskId,
+                sessionId: message.from,
+                status: "complete",
+                branch: (message.payload.branch as string) ?? "",
+                commits: [],
+                summary: (message.payload.summary as string) ?? "Verification passed",
+              };
+              await deps.taskStore.updateTask(plan.taskGraph.id, taskId, {
+                status: "complete",
+                result: verifyNode.result,
+              });
+            }
+
             emit({
-              type: "task_complete",
+              type: "verify_complete",
+              planId,
+              taskId,
+              sessionId: message.from,
+              detail: (message.payload.summary as string) ?? "Build verification passed",
+            });
+
+            // Clean up agent containers and sessions before completing
+            await cleanupPlanResources(plan);
+
+            emit({
+              type: "plan_complete",
+              planId,
+              detail: "All tasks verified — plan complete",
+            });
+            plan.phase = "complete";
+
+          } else if (isIntegrationTest) {
+            // ── Integration test passed → spawn verify agent ──
+            plan.activeSessions.delete(taskId);
+            plan.updatedAt = Date.now();
+
+            const testNode = plan.taskGraph.nodes.find((n) => n.id === "integration-test");
+            if (testNode) {
+              testNode.status = "complete";
+              testNode.result = {
+                taskId,
+                sessionId: message.from,
+                status: "complete",
+                branch: (message.payload.branch as string) ?? "",
+                commits: (message.payload.commits as string[]) ?? [],
+                summary: (message.payload.summary as string) ?? "Integration test passed",
+              };
+              await deps.taskStore.updateTask(plan.taskGraph.id, taskId, {
+                status: "complete",
+                result: testNode.result,
+              });
+            }
+
+            emit({
+              type: "testing_complete",
               planId,
               taskId,
               sessionId: message.from,
               detail: (message.payload.summary as string) ?? "Integration test passed",
             });
-            emit({
-              type: "plan_complete",
-              planId,
-              detail: "All tasks and integration tests passed",
-            });
-            plan.phase = "complete";
+
+            // Now spawn the verify agent
+            await spawnVerifyAgent(plan);
 
           } else if (isPerTaskTest && parentTaskId) {
             // ── Per-task test passed → mark parent task as complete ──
@@ -711,10 +962,47 @@ export function createPlanner(
           plan.activeSessions.delete(taskId);
           plan.updatedAt = Date.now();
 
+          // Verify build failure → plan failed (verification found issues)
+          if (taskId === "verify-build") {
+            const verifyNode = plan.taskGraph.nodes.find((n) => n.id === "verify-build");
+            if (verifyNode) {
+              verifyNode.status = "failed";
+              await deps.taskStore.updateTask(plan.taskGraph.id, taskId, {
+                status: "failed",
+              });
+            }
+
+            emit({
+              type: "verify_failed",
+              planId,
+              taskId,
+              sessionId: message.from,
+              detail: `Verify build failed: ${error}`,
+            });
+            emit({
+              type: "plan_failed",
+              planId,
+              detail: `Verification failed: ${error}`,
+            });
+            plan.phase = "failed";
+
+            // Still clean up agent containers/sessions for completed tasks
+            await cleanupPlanResources(plan);
+            break;
+          }
+
           // Integration test failure → plan failed
           if (taskId === "integration-test") {
+            const testNode = plan.taskGraph.nodes.find((n) => n.id === "integration-test");
+            if (testNode) {
+              testNode.status = "failed";
+              await deps.taskStore.updateTask(plan.taskGraph.id, taskId, {
+                status: "failed",
+              });
+            }
+
             emit({
-              type: "task_failed",
+              type: "testing_failed",
               planId,
               taskId,
               sessionId: message.from,
@@ -883,7 +1171,7 @@ export function createPlanner(
 
     async monitor(): Promise<void> {
       for (const [planId, plan] of plans) {
-        if (plan.phase !== "executing" && plan.phase !== "testing") continue;
+        if (plan.phase !== "executing" && plan.phase !== "testing" && plan.phase !== "verifying") continue;
 
         // Check for deadlocks
         const deadlocks = await deps.fileLocks.detectDeadlocks();

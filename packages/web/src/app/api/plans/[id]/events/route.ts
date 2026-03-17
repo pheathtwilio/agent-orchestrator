@@ -1,8 +1,9 @@
 import {
   createMessageBus,
   createTaskStore,
+  type BusMessage,
+  type TaskGraph,
 } from "@composio/ao-message-bus";
-import type { BusMessage, TaskGraph } from "@composio/ao-message-bus";
 
 export const dynamic = "force-dynamic";
 

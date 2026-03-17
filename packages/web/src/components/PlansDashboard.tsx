@@ -2,8 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { cn } from "@/lib/cn";
-import { usePlanEvents } from "@/hooks/usePlanEvents";
-import type { PlanTask } from "@/hooks/usePlanEvents";
+import { usePlanEvents, type PlanTask } from "@/hooks/usePlanEvents";
 import { SwimLane } from "./plans/SwimLane";
 import { TaskQueueLog } from "./plans/TaskQueueLog";
 import { PlanSummaryPanel } from "./plans/PlanSummaryPanel";

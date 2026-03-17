@@ -101,6 +101,7 @@ export type PlanPhase =
   | "review"
   | "executing"
   | "testing"
+  | "verifying"
   | "complete"
   | "failed"
   | "cancelled";
@@ -132,6 +133,9 @@ export type PlannerEventType =
   | "testing_started"
   | "testing_complete"
   | "testing_failed"
+  | "verify_started"
+  | "verify_complete"
+  | "verify_failed"
   | "plan_complete"
   | "plan_failed"
   | "agent_stuck"

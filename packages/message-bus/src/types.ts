@@ -181,6 +181,9 @@ export interface TaskStore {
   /** Get token usage for a plan (all sessions) */
   getUsage(planId: string): Promise<PlanUsage>;
 
+  /** Add a node to an existing task graph (e.g. for dynamically spawned test/verify tasks) */
+  addNode(graphId: string, node: TaskNode): Promise<TaskNode | null>;
+
   /** Archive a plan (hide from default list) */
   archiveGraph(graphId: string): Promise<void>;
 

@@ -83,6 +83,27 @@ export function createTaskStore(redisUrl?: string): TaskStore {
       return updatedTask;
     },
 
+    async addNode(graphId: string, node: TaskNode): Promise<TaskNode | null> {
+      await ensureConnected();
+
+      const data = await redis.get(graphKey(graphId));
+      if (!data) return null;
+
+      const graph = JSON.parse(data) as TaskGraph;
+
+      // Replace if a node with this ID already exists, otherwise append
+      const existing = graph.nodes.findIndex((n) => n.id === node.id);
+      if (existing !== -1) {
+        graph.nodes[existing] = node;
+      } else {
+        graph.nodes.push(node);
+      }
+      graph.updatedAt = Date.now();
+
+      await redis.set(graphKey(graphId), JSON.stringify(graph));
+      return node;
+    },
+
     async getReadyTasks(graphId: string): Promise<TaskNode[]> {
       await ensureConnected();
 

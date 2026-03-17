@@ -101,9 +101,13 @@ function mockTaskStore(graph: TaskGraph | null, usage: PlanUsage = mockUsage): T
     getUsage: vi.fn().mockResolvedValue(usage),
     createGraph: vi.fn(),
     updateTask: vi.fn(),
+    addNode: vi.fn(),
     getReadyTasks: vi.fn(),
     listGraphs: vi.fn(),
     deleteGraph: vi.fn(),
+    archiveGraph: vi.fn(),
+    unarchiveGraph: vi.fn(),
+    listArchivedIds: vi.fn().mockResolvedValue(new Set()),
     disconnect: vi.fn(),
   };
 }
