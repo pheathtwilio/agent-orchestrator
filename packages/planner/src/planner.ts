@@ -75,6 +75,9 @@ export interface Planner {
   /** List all active plans */
   listPlans(): ExecutionPlan[];
 
+  /** Cancel a plan — kills all active agents, releases locks, marks cancelled */
+  cancelPlan(planId: string): Promise<{ killed: string[] }>;
+
   /** Shutdown */
   shutdown(): Promise<void>;
 }
@@ -927,6 +930,45 @@ export function createPlanner(
 
     listPlans(): ExecutionPlan[] {
       return Array.from(plans.values());
+    },
+
+    async cancelPlan(planId: string): Promise<{ killed: string[] }> {
+      const plan = plans.get(planId);
+      if (!plan) throw new Error(`Plan ${planId} not found`);
+
+      const killed: string[] = [];
+
+      // Kill all active sessions
+      for (const [taskId, sessionId] of plan.activeSessions) {
+        try {
+          await deps.killSession(sessionId);
+          killed.push(sessionId);
+        } catch {
+          // Container may already be gone
+        }
+        await deps.fileLocks.releaseAll(taskId);
+
+        // Mark in-progress tasks as cancelled
+        const node = plan.taskGraph.nodes.find((n) => n.id === taskId);
+        if (node && (node.status === "in_progress" || node.status === "assigned" || node.status === "testing")) {
+          node.status = "failed";
+          await deps.taskStore.updateTask(plan.taskGraph.id, taskId, {
+            status: "failed",
+          });
+        }
+      }
+
+      plan.activeSessions.clear();
+      plan.phase = "cancelled";
+      plan.updatedAt = Date.now();
+
+      emit({
+        type: "plan_cancelled",
+        planId,
+        detail: `Plan cancelled — killed ${killed.length} agent(s)`,
+      });
+
+      return { killed };
     },
 
     async shutdown(): Promise<void> {

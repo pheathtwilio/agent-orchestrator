@@ -30,6 +30,7 @@ function formatPhase(phase: string): string {
     testing: chalk.magenta,
     complete: chalk.green,
     failed: chalk.red,
+    cancelled: chalk.red,
   };
   return (colors[phase] ?? chalk.white)(phase);
 }
@@ -97,6 +98,7 @@ function printEvent(event: PlannerEvent): void {
     testing_failed: chalk.red,
     plan_complete: chalk.green.bold,
     plan_failed: chalk.red.bold,
+    plan_cancelled: chalk.red.bold,
     agent_stuck: chalk.yellow,
     agent_unstuck: chalk.green,
     deadlock_detected: chalk.red,
@@ -540,9 +542,14 @@ export function registerPlan(program: Command): void {
           }
         }
 
-        // Exit when plan completes or fails
-        if (event.type === "plan_complete" || event.type === "plan_failed") {
+        // Exit when plan completes, fails, or is cancelled
+        if (event.type === "plan_complete" || event.type === "plan_failed" || event.type === "plan_cancelled") {
           console.log();
+          if (event.type === "plan_cancelled") {
+            console.log(chalk.red.bold("  Plan cancelled."));
+            cleanup();
+            return;
+          }
           if (event.type === "plan_complete") {
             console.log(chalk.green.bold("  Plan complete!"));
 
@@ -718,6 +725,74 @@ export function registerPlan(program: Command): void {
           process.exit(1);
         }
       } finally {
+        await taskStore.disconnect();
+      }
+    });
+
+  // ao plan cancel <project> <plan-id>
+  plan
+    .command("cancel <project> <plan-id>")
+    .description("Cancel a running plan — kills all active agents and marks plan as cancelled")
+    .action(async (projectId: string, planId: string) => {
+      banner("Cancel Plan");
+
+      const config = loadConfig();
+      if (!config.projects[projectId]) {
+        console.error(chalk.red(`Project "${projectId}" not found in config`));
+        process.exit(1);
+      }
+
+      const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
+      const messageBus = createMessageBus(redisUrl);
+      const fileLocks = createFileLockRegistry(redisUrl);
+      const taskStore = createTaskStore(redisUrl);
+      const sm = await getSessionManager(config);
+
+      const planner = createPlanner(
+        {
+          messageBus,
+          fileLocks,
+          taskStore,
+          spawnSession: async () => { throw new Error("Cannot spawn during cancel"); },
+          killSession: async (sessionId) => { await sm.kill(sessionId); },
+        },
+      );
+
+      planner.onEvent(printEvent);
+
+      try {
+        await planner.loadPlan(planId, projectId);
+        const plan = planner.getPlan(planId);
+
+        if (!plan) {
+          console.error(chalk.red(`Plan "${planId}" not found`));
+          process.exit(1);
+        }
+
+        if (plan.phase === "complete" || plan.phase === "cancelled") {
+          console.log(chalk.dim(`\n  Plan is already ${plan.phase}\n`));
+          return;
+        }
+
+        const spinner = ora("Cancelling plan...").start();
+        const { killed } = await planner.cancelPlan(planId);
+        spinner.succeed("Plan cancelled");
+
+        console.log();
+        console.log(`  Killed ${killed.length} agent(s)`);
+
+        const complete = plan.taskGraph.nodes.filter((n) => n.status === "complete").length;
+        const total = plan.taskGraph.nodes.length;
+        if (complete > 0) {
+          console.log(chalk.dim(`  ${complete}/${total} tasks were already complete`));
+        }
+        console.log();
+      } catch (err) {
+        console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+        process.exit(1);
+      } finally {
+        await messageBus.disconnect();
+        await fileLocks.disconnect();
         await taskStore.disconnect();
       }
     });

@@ -99,7 +99,8 @@ export type PlanPhase =
   | "executing"
   | "testing"
   | "complete"
-  | "failed";
+  | "failed"
+  | "cancelled";
 
 export interface ExecutionPlan {
   id: string;
@@ -132,7 +133,8 @@ export type PlannerEventType =
   | "plan_failed"
   | "agent_stuck"
   | "agent_unstuck"
-  | "deadlock_detected";
+  | "deadlock_detected"
+  | "plan_cancelled";
 
 export interface PlannerEvent {
   type: PlannerEventType;
