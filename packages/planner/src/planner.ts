@@ -460,11 +460,23 @@ export function createPlanner(
         });
       }
 
+      // Infer phase from task statuses
+      const hasInProgress = graph.nodes.some((n) =>
+        n.status === "in_progress" || n.status === "assigned" || n.status === "testing",
+      );
+      const allComplete = graph.nodes.every((n) => n.status === "complete");
+      const hasFailed = graph.nodes.some((n) => n.status === "failed");
+      let phase: PlanPhase;
+      if (allComplete) phase = "complete";
+      else if (hasFailed) phase = "failed";
+      else if (hasInProgress || graph.nodes.some((n) => n.assignedTo !== null)) phase = "executing";
+      else phase = "review";
+
       const plan: ExecutionPlan = {
         id: planId,
         projectId,
         featureDescription: graph.title,
-        phase: "review",
+        phase,
         taskGraph: graph,
         assignments,
         activeSessions: new Map(),
