@@ -8,6 +8,7 @@ import {
   createPlanner,
   createMonitor,
   createFeaturePR,
+  createSecurityTrigger,
   DEFAULT_PLANNER_CONFIG,
   type ExecutionPlan,
   type PlannerEvent,
@@ -794,6 +795,88 @@ export function registerPlan(program: Command): void {
         await messageBus.disconnect();
         await fileLocks.disconnect();
         await taskStore.disconnect();
+      }
+    });
+
+  // ao plan audit <project> <scope>
+  plan
+    .command("audit <project> <scope>")
+    .description("Spawn a security agent to audit the project")
+    .option("--branch <branch>", "Branch to audit (default: project default branch)")
+    .option("--follow", "Follow real-time output from the security agent")
+    .action(async (projectId: string, scope: string, opts: { branch?: string; follow?: boolean }) => {
+      banner("Security Audit");
+
+      const config = loadConfig();
+      const project = config.projects[projectId];
+      if (!project) {
+        console.error(chalk.red(`Project "${projectId}" not found in config`));
+        process.exit(1);
+      }
+
+      const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
+      const messageBus = createMessageBus(redisUrl);
+      const sm = await getSessionManager(config);
+
+      const trigger = createSecurityTrigger({
+        messageBus,
+        spawnSession: async (params) => {
+          const session = await sm.spawn({
+            projectId: params.projectId,
+            prompt: params.prompt,
+            branch: params.branch,
+            runtime: "docker",
+            runtimeConfig: { image: params.dockerImage },
+            environment: {
+              ...params.environment,
+              AO_SKILL: params.skill,
+              AO_MODEL: params.model,
+            },
+          });
+          return session.id;
+        },
+      });
+
+      const spinner = ora("Spawning security agent...").start();
+
+      try {
+        const sessionId = await trigger.triggerAudit(
+          projectId,
+          scope,
+          opts.branch ?? project.defaultBranch,
+        );
+
+        spinner.succeed(`Security agent spawned: ${chalk.bold(sessionId)}`);
+        console.log();
+        console.log(`  Scope:   ${scope}`);
+        console.log(`  Branch:  ${opts.branch ?? project.defaultBranch}`);
+        console.log(`  Logs:    ${chalk.dim(`ao plan logs ${sessionId}`)}`);
+        console.log();
+
+        if (opts.follow) {
+          console.log(chalk.dim(`  Streaming output... Press Ctrl+C to stop\n`));
+
+          await messageBus.subscribeOutput(sessionId, (data) => {
+            const time = new Date(data.timestamp).toLocaleTimeString();
+            console.log(chalk.dim(`[${time}]`) + ` ${data.line}`);
+          });
+
+          async function cleanup() {
+            await messageBus.unsubscribeOutput(sessionId);
+            await messageBus.disconnect();
+            process.exit(0);
+          }
+
+          process.on("SIGINT", cleanup);
+          process.on("SIGTERM", cleanup);
+        } else {
+          await messageBus.disconnect();
+        }
+      } catch (err) {
+        spinner.fail("Failed to spawn security agent");
+        console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+        await messageBus.disconnect();
+        process.exit(1);
       }
     });
 

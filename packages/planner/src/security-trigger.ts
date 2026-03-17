@@ -1,4 +1,5 @@
 import type { MessageBus } from "@composio/ao-message-bus";
+import { modelTierToId } from "./skill-classifier.js";
 import type { AgentSkill } from "./types.js";
 
 // ============================================================================
@@ -165,7 +166,7 @@ export function createSecurityTrigger(
         taskId,
         prompt,
         branch: `fix/security/${taskId}`,
-        model: "claude-sonnet-4-20250514",
+        model: modelTierToId("sonnet"),
         skill: "security",
         dockerImage: "ao-agent-security:latest",
         environment: {
@@ -215,7 +216,7 @@ export function createSecurityTrigger(
         taskId,
         prompt,
         branch: branch ?? `fix/security-audit-${Date.now()}`,
-        model: "claude-sonnet-4-20250514",
+        model: modelTierToId("sonnet"),
         skill: "security",
         dockerImage: "ao-agent-security:latest",
         environment: {

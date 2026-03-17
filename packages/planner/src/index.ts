@@ -42,3 +42,5 @@ export type {
   MergeInput,
   MergeResult,
 } from "./merge-orchestrator.js";
+export { parseGitHubWebhook, handleSecurityWebhook } from "./security-webhook.js";
+export type { WebhookPayload } from "./security-webhook.js";
