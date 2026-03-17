@@ -622,6 +622,9 @@ importers:
       '@composio/ao-message-bus':
         specifier: workspace:*
         version: link:../message-bus
+      '@composio/ao-planner':
+        specifier: workspace:*
+        version: link:../planner
       '@composio/ao-plugin-agent-claude-code':
         specifier: workspace:*
         version: link:../plugins/agent-claude-code

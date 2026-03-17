@@ -206,3 +206,16 @@ export interface PlanUsage {
     costUsd: number;
   };
 }
+
+// ============================================================================
+// SUMMARY STORE
+// ============================================================================
+
+export interface SummaryStore {
+  /** Store a plan summary (keyed by planId). Accepts any object with a planId field. */
+  store(summary: { planId: string }): Promise<void>;
+  /** Retrieve a plan summary by planId */
+  get(planId: string): Promise<Record<string, unknown> | null>;
+  /** Graceful shutdown */
+  disconnect(): Promise<void>;
+}

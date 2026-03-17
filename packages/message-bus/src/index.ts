@@ -1,6 +1,7 @@
 export { createMessageBus } from "./bus.js";
 export { createFileLockRegistry } from "./file-locks.js";
 export { createTaskStore } from "./task-store.js";
+export { createSummaryStore } from "./summary-store.js";
 export type {
   MessageBus,
   BusMessage,
@@ -17,4 +18,5 @@ export type {
   TaskStatus,
   SessionUsage,
   PlanUsage,
+  SummaryStore,
 } from "./types.js";

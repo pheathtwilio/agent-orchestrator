@@ -46,3 +46,9 @@ export { parseGitHubWebhook, handleSecurityWebhook } from "./security-webhook.js
 export type { WebhookPayload } from "./security-webhook.js";
 export { cleanup as runHousekeeping, DEFAULT_CLEANUP_CONFIG } from "./housekeeping.js";
 export type { CleanupResult, CleanupConfig } from "./housekeeping.js";
+export { generatePlanSummary } from "./plan-summary.js";
+export type {
+  PlanSummary,
+  TaskSummary,
+  GenerateSummaryInput,
+} from "./plan-summary.js";
