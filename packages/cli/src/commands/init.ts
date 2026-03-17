@@ -33,10 +33,14 @@ interface EnvironmentInfo {
   currentBranch: string | null;
   defaultBranch: string | null;
   hasTmux: boolean;
+  hasDocker: boolean;
+  hasDockerRunning: boolean;
   hasGh: boolean;
   ghAuthed: boolean;
   hasLinearKey: boolean;
   hasSlackWebhook: boolean;
+  hasBedrock: boolean;
+  hasApiKey: boolean;
 }
 
 async function detectDefaultBranch(
@@ -123,9 +127,18 @@ async function detectEnvironment(workingDir: string): Promise<EnvironmentInfo> {
     ghAuthed = authStatus !== null;
   }
 
+  // Check for Docker
+  const hasDocker = (await execSilent("docker", ["--version"])) !== null;
+  let hasDockerRunning = false;
+  if (hasDocker) {
+    hasDockerRunning = (await execSilent("docker", ["info"])) !== null;
+  }
+
   // Check for API keys in environment
   const hasLinearKey = !!process.env["LINEAR_API_KEY"];
   const hasSlackWebhook = !!process.env["SLACK_WEBHOOK_URL"];
+  const hasBedrock = !!process.env["CLAUDE_CODE_USE_BEDROCK"];
+  const hasApiKey = !!process.env["ANTHROPIC_API_KEY"];
 
   return {
     isGitRepo,
@@ -134,10 +147,14 @@ async function detectEnvironment(workingDir: string): Promise<EnvironmentInfo> {
     currentBranch,
     defaultBranch,
     hasTmux,
+    hasDocker,
+    hasDockerRunning,
     hasGh,
     ghAuthed,
     hasLinearKey,
     hasSlackWebhook,
+    hasBedrock,
+    hasApiKey,
   };
 }
 
@@ -192,8 +209,21 @@ export function registerInit(program: Command): void {
       if (env.hasTmux) {
         console.log(chalk.green("  ✓ tmux available"));
       } else {
-        console.log(chalk.yellow("  ⚠ tmux not found"));
-        console.log(chalk.dim("    Install with: brew install tmux"));
+        console.log(chalk.dim("  ○ tmux not found"));
+      }
+
+      if (env.hasDocker) {
+        if (env.hasDockerRunning) {
+          console.log(chalk.green("  ✓ Docker available and running"));
+        } else {
+          console.log(chalk.yellow("  ⚠ Docker installed but not running"));
+        }
+      } else {
+        console.log(chalk.dim("  ○ Docker not found"));
+      }
+
+      if (!env.hasTmux && !env.hasDocker) {
+        console.log(chalk.yellow("  ⚠ No runtime found — install tmux or Docker"));
       }
 
       if (env.hasGh) {
@@ -256,7 +286,8 @@ export function registerInit(program: Command): void {
 
         // Default plugins
         console.log(chalk.bold("\n  Default Plugins\n"));
-        const runtime = await prompt(rl, "Runtime (tmux, process)", "tmux");
+        const defaultRuntime = env.hasDockerRunning ? "docker" : "tmux";
+        const runtime = await prompt(rl, "Runtime (tmux, docker, process)", defaultRuntime);
         const agent = await prompt(
           rl,
           "Agent (claude-code, codex, aider, opencode)",
@@ -462,12 +493,28 @@ async function handleAutoMode(outputPath: string, smart: boolean): Promise<void>
   } else if (port !== DEFAULT_PORT) {
     console.log(chalk.yellow(`  ⚠ Port ${DEFAULT_PORT} is busy — using ${port} instead.`));
   }
+  // Pick runtime: prefer Docker when running, fall back to tmux
+  const runtime = env.hasDockerRunning ? "docker" : "tmux";
+
+  if (runtime === "docker") {
+    console.log(chalk.green("  ✓ Docker detected — using Docker runtime"));
+    if (env.hasBedrock) {
+      console.log(chalk.green("  ✓ Bedrock auth detected"));
+    } else if (env.hasApiKey) {
+      console.log(chalk.green("  ✓ API key auth detected"));
+    } else {
+      console.log(chalk.yellow("  ⚠ No Claude auth detected — set ANTHROPIC_API_KEY or CLAUDE_CODE_USE_BEDROCK=1"));
+    }
+  } else {
+    console.log(chalk.dim("  Using tmux runtime (Docker not running)"));
+  }
+
   const config: Record<string, unknown> = {
     dataDir: "~/.agent-orchestrator",
     worktreeDir: "~/.worktrees",
     port: port ?? DEFAULT_PORT,
     defaults: {
-      runtime: "tmux",
+      runtime,
       agent: "claude-code",
       workspace: "worktree",
       notifiers: ["desktop"],
@@ -527,8 +574,8 @@ async function handleAutoMode(outputPath: string, smart: boolean): Promise<void>
   }
 
   // Show warnings
-  if (!env.hasTmux) {
-    console.log(chalk.yellow("⚠ tmux not found - install with: brew install tmux"));
+  if (!env.hasTmux && !env.hasDocker) {
+    console.log(chalk.yellow("⚠ No runtime found - install tmux or Docker"));
   }
   if (!env.ghAuthed && env.hasGh) {
     console.log(chalk.yellow("⚠ GitHub CLI not authenticated - run: gh auth login"));
