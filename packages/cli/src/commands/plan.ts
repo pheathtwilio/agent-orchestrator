@@ -5,6 +5,7 @@ import { loadConfig } from "@composio/ao-core";
 import {
   createPlanner,
   createMonitor,
+  createFeaturePR,
   DEFAULT_PLANNER_CONFIG,
   type ExecutionPlan,
   type PlannerEvent,
@@ -385,7 +386,16 @@ export function registerPlan(program: Command): void {
     .description("Long-running process: subscribe to agent messages, trigger tests, stream events")
     .option("--per-task-test", "Spawn separate test agents per task (default: agents self-test)")
     .option("--follow", "Follow real-time output from all agents")
-    .action(async (projectId: string, planId: string, opts: { perTaskTest?: boolean; follow?: boolean }) => {
+    .option("--no-pr", "Skip creating a consolidated PR on completion")
+    .option("--draft", "Create PR as draft")
+    .option("--no-cleanup", "Keep individual task branches after PR creation")
+    .action(async (projectId: string, planId: string, opts: {
+      perTaskTest?: boolean;
+      follow?: boolean;
+      pr?: boolean;
+      draft?: boolean;
+      cleanup?: boolean;
+    }) => {
       banner("Plan Watch");
 
       const config = loadConfig();
@@ -467,6 +477,48 @@ export function registerPlan(program: Command): void {
           console.log();
           if (event.type === "plan_complete") {
             console.log(chalk.green.bold("  Plan complete!"));
+
+            // Create consolidated PR
+            if (opts.pr !== false) {
+              const project = config.projects[projectId]!;
+              const currentPlan = planner.getPlan(planId);
+
+              if (currentPlan) {
+                const taskBranches = currentPlan.taskGraph.nodes
+                  .filter((n) => n.branch)
+                  .map((n) => n.branch as string);
+
+                const spinner = ora("Creating consolidated PR...").start();
+                const result = await createFeaturePR(
+                  {
+                    planId,
+                    featureDescription: currentPlan.featureDescription,
+                    repo: project.repo,
+                    repoPath: project.path,
+                    taskBranches,
+                    integrationBranch: `test/${planId}/integration`,
+                  },
+                  {
+                    baseBranch: project.defaultBranch,
+                    draft: opts.draft,
+                    cleanupBranches: opts.cleanup !== false,
+                    cleanupTestBranch: opts.cleanup !== false,
+                  },
+                );
+
+                if (result.success) {
+                  spinner.succeed("PR created");
+                  console.log(chalk.green(`\n  ${result.prUrl}`));
+                  if (result.cleanedBranches.length > 0) {
+                    console.log(chalk.dim(`  Cleaned up ${result.cleanedBranches.length} branch(es)`));
+                  }
+                } else {
+                  spinner.fail("PR creation failed");
+                  console.log(chalk.red(`  ${result.error}`));
+                  console.log(chalk.dim(`  Feature branch: ${result.featureBranch}`));
+                }
+              }
+            }
           } else {
             console.log(chalk.red.bold("  Plan failed."));
           }
@@ -501,6 +553,96 @@ export function registerPlan(program: Command): void {
 
       process.on("SIGINT", cleanup);
       process.on("SIGTERM", cleanup);
+    });
+
+  // ao plan merge <project> <plan-id>
+  plan
+    .command("merge <project> <plan-id>")
+    .description("Create a consolidated PR from a completed plan's branches")
+    .option("--draft", "Create PR as draft")
+    .option("--no-cleanup", "Keep individual task branches after PR creation")
+    .action(async (projectId: string, planId: string, opts: { draft?: boolean; cleanup?: boolean }) => {
+      banner("Merge Branches");
+
+      const config = loadConfig();
+      const project = config.projects[projectId];
+      if (!project) {
+        console.error(chalk.red(`Project "${projectId}" not found in config`));
+        process.exit(1);
+      }
+
+      const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
+      const taskStore = createTaskStore(redisUrl);
+
+      try {
+        const graph = await taskStore.getGraph(planId);
+        if (!graph) {
+          console.error(chalk.red(`Plan "${planId}" not found`));
+          process.exit(1);
+        }
+
+        const allComplete = graph.nodes.every((n) => n.status === "complete");
+        if (!allComplete) {
+          const complete = graph.nodes.filter((n) => n.status === "complete").length;
+          console.error(chalk.red(
+            `Plan is not complete (${complete}/${graph.nodes.length} tasks done). ` +
+            `Only completed plans can be merged.`,
+          ));
+          process.exit(1);
+        }
+
+        const taskBranches = graph.nodes
+          .filter((n) => n.branch)
+          .map((n) => n.branch as string);
+
+        if (taskBranches.length === 0) {
+          console.error(chalk.red("No task branches found in plan"));
+          process.exit(1);
+        }
+
+        console.log();
+        console.log(`  Plan:     ${chalk.bold(planId)}`);
+        console.log(`  Feature:  ${graph.title}`);
+        console.log(`  Branches: ${taskBranches.length}`);
+        console.log(`  Target:   ${project.defaultBranch}`);
+        console.log();
+
+        const spinner = ora("Creating consolidated PR...").start();
+
+        const result = await createFeaturePR(
+          {
+            planId,
+            featureDescription: graph.title,
+            repo: project.repo,
+            repoPath: project.path,
+            taskBranches,
+            integrationBranch: `test/${planId}/integration`,
+          },
+          {
+            baseBranch: project.defaultBranch,
+            draft: opts.draft,
+            cleanupBranches: opts.cleanup !== false,
+            cleanupTestBranch: opts.cleanup !== false,
+          },
+        );
+
+        if (result.success) {
+          spinner.succeed("PR created");
+          console.log(chalk.green(`\n  ${result.prUrl}`));
+          if (result.cleanedBranches.length > 0) {
+            console.log(chalk.dim(`  Cleaned up ${result.cleanedBranches.length} branch(es)`));
+          }
+          console.log();
+        } else {
+          spinner.fail("PR creation failed");
+          console.error(chalk.red(`  ${result.error}`));
+          console.log(chalk.dim(`  Feature branch: ${result.featureBranch}`));
+          console.log();
+          process.exit(1);
+        }
+      } finally {
+        await taskStore.disconnect();
+      }
     });
 
   // ao plan logs <session-id>

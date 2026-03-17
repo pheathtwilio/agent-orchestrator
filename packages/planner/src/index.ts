@@ -36,3 +36,9 @@ export type {
   TestTriggerDeps,
   TaskCompletionInfo,
 } from "./test-trigger.js";
+export { createFeaturePR, DEFAULT_MERGE_CONFIG } from "./merge-orchestrator.js";
+export type {
+  MergeOrchestratorConfig,
+  MergeInput,
+  MergeResult,
+} from "./merge-orchestrator.js";
