@@ -39,6 +39,10 @@ RUN ARCH=$(dpkg --print-architecture) \
 # Claude Code CLI (runs with --dangerously-skip-permissions)
 RUN npm install -g @anthropic-ai/claude-code
 
+# Sidecar dependency (lightweight Redis client for agent→orchestrator messaging)
+RUN npm install -g ioredis
+ENV NODE_PATH=/usr/local/lib/node_modules
+
 # Create non-root agent user
 RUN useradd -m -s /bin/bash agent \
     && mkdir -p /workspace /workspace/.claude /home/agent/.claude \
@@ -51,6 +55,9 @@ COPY docker/skills/base/CLAUDE.md /workspace/.claude/CLAUDE.md
 COPY docker/config/settings.json /home/agent/.claude/settings.json
 COPY docker/config/settings.local.json /home/agent/.claude/settings.local.json
 RUN chown -R agent:agent /home/agent/.claude
+
+# Copy sidecar script (agent→orchestrator bridge via Redis)
+COPY docker/scripts/sidecar.mjs /usr/local/bin/ao-sidecar.mjs
 
 # Copy entrypoint that handles auth detection
 COPY docker/scripts/entrypoint.sh /usr/local/bin/entrypoint.sh

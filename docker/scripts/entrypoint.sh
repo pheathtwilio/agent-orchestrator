@@ -54,6 +54,11 @@ mkdir -p "$HOME/.claude/projects" 2>/dev/null || true
 # Execute command or drop to shell
 if [ $# -eq 0 ]; then
     exec bash
+elif [ -n "$AO_PLAN_ID" ]; then
+    # Planner mode: wrap the agent command with the sidecar
+    # The sidecar handles Redis heartbeats, inbox watching, and completion reporting
+    echo "Sidecar mode: plan=$AO_PLAN_ID task=$AO_TASK_ID"
+    exec node /usr/local/bin/ao-sidecar.mjs "$@"
 else
     exec "$@"
 fi

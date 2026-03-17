@@ -165,9 +165,10 @@ export function create(config?: Record<string, unknown>): Runtime {
     },
 
     async sendMessage(handle: RuntimeHandle, message: string): Promise<void> {
-      // Write the message to a file inside the container, then signal the agent.
-      // This avoids stdin piping issues with docker exec.
-      const escaped = message.replace(/'/g, "'\\''");
+      // Write a JSON envelope to the sidecar inbox file.
+      // The sidecar polls this file and acts on structured messages (ABORT, etc).
+      const envelope = JSON.stringify({ type: "TEXT", content: message, timestamp: Date.now() });
+      const escaped = envelope.replace(/'/g, "'\\''");
       await docker(
         "exec", handle.id,
         "bash", "-c", `echo '${escaped}' >> /tmp/ao-inbox`,
