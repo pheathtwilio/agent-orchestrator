@@ -205,6 +205,7 @@ import { POST as remapPOST } from "@/app/api/sessions/[id]/remap/route";
 import { POST as mergePOST } from "@/app/api/prs/[id]/merge/route";
 import { GET as eventsGET } from "@/app/api/events/route";
 import { GET as observabilityGET } from "@/app/api/observability/route";
+import { GET as healthGET } from "@/app/api/health/route";
 
 function makeRequest(url: string, init?: RequestInit): NextRequest {
   return new NextRequest(
@@ -832,6 +833,49 @@ describe("API Routes", () => {
       expect(data).toHaveProperty("generatedAt");
       expect(data).toHaveProperty("overallStatus");
       expect(data).toHaveProperty("projects");
+    });
+  });
+
+  // ── GET /api/health ────────────────────────────────────────────────
+
+  describe("GET /api/health", () => {
+    it("returns 200 with status ok", async () => {
+      const res = await healthGET();
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.status).toBe("ok");
+    });
+
+    it("includes uptime as a non-negative number", async () => {
+      const res = await healthGET();
+      const data = await res.json();
+      expect(typeof data.uptime).toBe("number");
+      expect(data.uptime).toBeGreaterThanOrEqual(0);
+    });
+
+    it("includes version string", async () => {
+      const res = await healthGET();
+      const data = await res.json();
+      expect(typeof data.version).toBe("string");
+      expect(data.version.length).toBeGreaterThan(0);
+    });
+
+    it("includes ISO timestamp", async () => {
+      const before = new Date().toISOString();
+      const res = await healthGET();
+      const after = new Date().toISOString();
+      const data = await res.json();
+      expect(data.timestamp >= before).toBe(true);
+      expect(data.timestamp <= after).toBe(true);
+    });
+
+    it("uptime increases between calls", async () => {
+      const res1 = await healthGET();
+      await new Promise((resolve) => setTimeout(resolve, 1100));
+      const res2 = await healthGET();
+      const d1 = await res1.json();
+      const d2 = await res2.json();
+      expect(d2.uptime).toBeGreaterThanOrEqual(d1.uptime);
     });
   });
 });
