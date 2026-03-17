@@ -14,14 +14,14 @@ if [ "$CLAUDE_CODE_USE_BEDROCK" = "1" ]; then
         exit 1
     fi
 
-    # Check SSO session
+    # Check SSO session (non-fatal — Claude SDK reads tokens directly)
     AWS_PROFILE="${AWS_PROFILE:-twilio-devex-bedrock}"
-    if aws sts get-caller-identity --profile "$AWS_PROFILE" &>/dev/null; then
+    if aws sts get-caller-identity --profile "$AWS_PROFILE" &>/dev/null 2>&1; then
         echo "  AWS SSO session: valid"
     else
-        echo "ERROR: AWS SSO session expired. On the host, run:"
-        echo "  aws sso login --profile $AWS_PROFILE"
-        exit 1
+        echo "  AWS SSO session: could not verify (CLI check failed)"
+        echo "  Claude SDK will attempt to read SSO tokens directly."
+        echo "  If auth fails, run on the host: aws sso login --profile $AWS_PROFILE"
     fi
 
     echo "  AWS Profile: $AWS_PROFILE"

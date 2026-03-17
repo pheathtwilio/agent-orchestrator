@@ -24,8 +24,14 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && apt-get update && apt-get install -y gh \
     && rm -rf /var/lib/apt/lists/*
 
-# AWS CLI (for Bedrock SSO auth mode)
-RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip" \
+# AWS CLI v2 (for Bedrock SSO auth mode) — detect architecture
+RUN ARCH=$(dpkg --print-architecture) \
+    && if [ "$ARCH" = "arm64" ] || [ "$ARCH" = "aarch64" ]; then \
+         AWS_CLI_URL="https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip"; \
+       else \
+         AWS_CLI_URL="https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip"; \
+       fi \
+    && curl "$AWS_CLI_URL" -o "/tmp/awscliv2.zip" \
     && unzip -q /tmp/awscliv2.zip -d /tmp \
     && /tmp/aws/install \
     && rm -rf /tmp/aws /tmp/awscliv2.zip
