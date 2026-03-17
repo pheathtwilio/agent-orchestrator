@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
 import type { AgentSkill, ModelTier, ModelPolicy, TaskAssignment } from "./types.js";
 
 // ============================================================================

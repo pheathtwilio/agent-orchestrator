@@ -195,9 +195,9 @@ export function registerPlan(program: Command): void {
 
   // ao plan approve <plan-id>
   plan
-    .command("approve <plan-id>")
+    .command("approve <project> <plan-id>")
     .description("Approve a plan and start spawning agents")
-    .action(async (planId: string) => {
+    .action(async (projectId: string, planId: string) => {
       banner("Approve Plan");
 
       const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
@@ -205,6 +205,12 @@ export function registerPlan(program: Command): void {
       const fileLocks = createFileLockRegistry(redisUrl);
       const taskStore = createTaskStore(redisUrl);
       const config = loadConfig();
+
+      if (!config.projects[projectId]) {
+        console.error(chalk.red(`Project "${projectId}" not found in config`));
+        process.exit(1);
+      }
+
       const sm = await getSessionManager(config);
 
       const planner = createPlanner(
@@ -236,6 +242,8 @@ export function registerPlan(program: Command): void {
       planner.onEvent(printEvent);
 
       try {
+        // Load the plan from Redis into the planner's in-memory state
+        await planner.loadPlan(planId, projectId);
         await planner.approvePlan(planId);
         console.log(chalk.green(`\n  Plan ${planId} approved — agents spawning\n`));
       } catch (err) {

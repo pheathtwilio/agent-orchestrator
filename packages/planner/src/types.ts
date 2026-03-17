@@ -58,7 +58,10 @@ export interface ModelPolicy {
 }
 
 export const DEFAULT_PLANNER_CONFIG: PlannerConfig = {
-  planningModel: "claude-opus-4-0-20250514",
+  planningModel:
+    process.env.ANTHROPIC_MODEL_OPUS
+    ?? process.env.ANTHROPIC_DEFAULT_OPUS_MODEL
+    ?? "claude-opus-4-0-20250514",
   maxDepth: 3,
   requireApproval: true,
   maxConcurrency: 5,

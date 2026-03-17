@@ -1072,6 +1072,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
           AO_SESSION_NAME: sessionId, // User-facing session name
           ...(tmuxName && { AO_TMUX_NAME: tmuxName }), // Tmux session name if using new arch
           ...spawnConfig.environment, // Per-spawn env overrides (e.g. from planner)
+          ...(composedPrompt && { AO_PROMPT: composedPrompt }), // Prompt for Docker sidecar
         },
         ...(spawnConfig.runtimeConfig && { runtimeConfig: spawnConfig.runtimeConfig }),
       });

@@ -133,7 +133,23 @@ function launchAgent() {
     process.exit(1);
   }
 
-  console.log(`[sidecar] Launching agent: ${args.join(" ")}`);
+  // If AO_PROMPT is set, write it to a file and inject --print flag for one-shot mode.
+  // This is needed because Docker containers can't receive post-launch prompts
+  // the way tmux sessions can.
+  const prompt = process.env.AO_PROMPT;
+  if (prompt) {
+    const promptFile = "/tmp/ao-prompt.txt";
+    writeFileSync(promptFile, prompt);
+
+    // The launch command comes as: bash -c "claude --dangerously-skip-permissions ..."
+    // Inject the prompt file via -p flag into the inner command
+    if (args[0] === "bash" && args[1] === "-c" && args[2]?.includes("claude")) {
+      args[2] = `${args[2]} -p "$(cat /tmp/ao-prompt.txt)"`;
+      console.log(`[sidecar] Injected prompt (${prompt.length} chars) via -p flag`);
+    }
+  }
+
+  console.log(`[sidecar] Launching agent: ${args[0]} ...${args.length > 1 ? ` (${args.length - 1} args)` : ""}`);
 
   agentProcess = spawn(args[0], args.slice(1), {
     cwd: "/workspace",

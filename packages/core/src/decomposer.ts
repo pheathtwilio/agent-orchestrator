@@ -9,7 +9,8 @@
  * complex issues are decomposed into child issues before agents are spawned.
  */
 
-import Anthropic from "@anthropic-ai/sdk";
+import type Anthropic from "@anthropic-ai/sdk";
+import { createAnthropicClient } from "./anthropic-client.js";
 
 // =============================================================================
 // TYPES
@@ -210,7 +211,7 @@ export async function decompose(
   taskDescription: string,
   config: DecomposerConfig = DEFAULT_DECOMPOSER_CONFIG,
 ): Promise<DecompositionPlan> {
-  const client = new Anthropic();
+  const client = createAnthropicClient();
   const tree = createTaskNode("1", taskDescription, 0, []);
 
   await planTree(client, config.model, tree, config.maxDepth);

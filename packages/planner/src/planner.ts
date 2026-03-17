@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { createAnthropicClient } from "@composio/ao-core";
 import { randomUUID } from "node:crypto";
 import {
   decompose,
@@ -65,6 +65,9 @@ export interface Planner {
   /** Register an event handler for dashboard/logging */
   onEvent(handler: PlannerEventHandler): void;
 
+  /** Load a plan from the task store into memory (for approve across process restarts) */
+  loadPlan(planId: string, projectId: string): Promise<ExecutionPlan>;
+
   /** Get current state of a plan */
   getPlan(planId: string): ExecutionPlan | undefined;
 
@@ -80,7 +83,7 @@ export function createPlanner(
   config: Partial<PlannerConfig> = {},
 ): Planner {
   const cfg: PlannerConfig = { ...DEFAULT_PLANNER_CONFIG, ...config };
-  const client = new Anthropic();
+  const client = createAnthropicClient();
   const plans = new Map<string, ExecutionPlan>();
   const eventHandlers: PlannerEventHandler[] = [];
 
@@ -430,6 +433,40 @@ export function createPlanner(
         await spawnReadyTasks(plan);
       }
 
+      return plan;
+    },
+
+    async loadPlan(planId: string, projectId: string): Promise<ExecutionPlan> {
+      const graph = await deps.taskStore.getGraph(planId);
+      if (!graph) throw new Error(`Plan ${planId} not found in task store`);
+
+      // Reconstruct assignments from task nodes
+      const assignments = new Map<string, TaskAssignment>();
+      for (const node of graph.nodes) {
+        const skill = (node.skill as AgentSkill) || "fullstack";
+        assignments.set(node.id, {
+          taskId: node.id,
+          skill,
+          estimatedComplexity: "medium",
+          model: resolveModel(skill, "medium", cfg.modelPolicy),
+          dockerImage: cfg.imageMap[skill] ?? cfg.imageMap.fullstack,
+          fileBoundary: node.fileBoundary,
+        });
+      }
+
+      const plan: ExecutionPlan = {
+        id: planId,
+        projectId,
+        featureDescription: graph.title,
+        phase: "review",
+        taskGraph: graph,
+        assignments,
+        activeSessions: new Map(),
+        createdAt: graph.createdAt,
+        updatedAt: graph.updatedAt,
+      };
+
+      plans.set(planId, plan);
       return plan;
     },
 

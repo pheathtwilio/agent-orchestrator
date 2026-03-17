@@ -55,6 +55,9 @@ export type { LifecycleManagerDeps } from "./lifecycle-manager.js";
 export { buildPrompt, BASE_AGENT_PROMPT } from "./prompt-builder.js";
 export type { PromptBuildConfig } from "./prompt-builder.js";
 
+// Anthropic client — auto-detects Bedrock vs API key
+export { createAnthropicClient } from "./anthropic-client.js";
+
 // Decomposer — LLM-driven task decomposition
 export {
   decompose,
