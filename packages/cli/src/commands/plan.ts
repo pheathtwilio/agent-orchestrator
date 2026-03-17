@@ -1,5 +1,7 @@
 import chalk from "chalk";
 import ora from "ora";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type { Command } from "commander";
 import { loadConfig } from "@composio/ao-core";
 import {
@@ -17,6 +19,8 @@ import {
 } from "@composio/ao-message-bus";
 import { banner } from "../lib/format.js";
 import { getSessionManager } from "../lib/create-session-manager.js";
+
+const execFileAsync = promisify(execFile);
 
 function formatPhase(phase: string): string {
   const colors: Record<string, (s: string) => string> = {
@@ -446,11 +450,75 @@ export function registerPlan(program: Command): void {
       // Load the plan from Redis
       await planner.loadPlan(planId, projectId);
 
+      // ── Monitor setup ──
+      // Uses docker CLI to check container health since we're on the host
+      const monitor = createMonitor(
+        {
+          messageBus,
+          fileLocks,
+          async getSessionOutput(sessionId, lines = 50) {
+            try {
+              const { stdout } = await execFileAsync(
+                "docker", ["logs", "--tail", String(lines), `ao-${sessionId}`],
+                { timeout: 10_000 },
+              );
+              return stdout;
+            } catch {
+              return "";
+            }
+          },
+          async isSessionAlive(sessionId) {
+            try {
+              const { stdout } = await execFileAsync(
+                "docker", ["inspect", "--format", "{{.State.Running}}", `ao-${sessionId}`],
+                { timeout: 5_000 },
+              );
+              return stdout.trim() === "true";
+            } catch {
+              return false;
+            }
+          },
+          async killSession(sessionId) {
+            await sm.kill(sessionId);
+          },
+          async respawnWithSummary({ planId: pId, taskId, sessionId: oldSid, progressSummary }) {
+            // Kill the old session, then let the planner reassign via STUCK message
+            await sm.kill(oldSid);
+            await messageBus.publish({
+              type: "STUCK",
+              from: oldSid,
+              to: "orchestrator",
+              payload: {
+                planId: pId,
+                taskId,
+                reason: `Context bloat — respawning with summary. Prior progress:\n${progressSummary}`,
+              },
+            });
+            return oldSid; // Planner will handle the actual respawn
+          },
+        },
+        {
+          pollIntervalMs: 30_000,
+          stuckThresholdMs: 5 * 60 * 1000,
+        },
+      );
+
+      // Forward monitor events to the same printEvent handler
+      monitor.onEvent(printEvent);
+
       // Track which sessions we're following output from
       const followedSessions = new Set<string>();
 
       planner.onEvent(async (event) => {
         printEvent(event);
+
+        // Track/untrack sessions in the monitor
+        if (event.type === "task_started" && event.sessionId && event.taskId) {
+          monitor.track(planId, event.taskId, event.sessionId);
+        }
+        if ((event.type === "task_complete" || event.type === "task_failed") && event.sessionId) {
+          monitor.untrack(event.sessionId);
+        }
 
         // Follow output from newly spawned agents
         if (opts.follow && event.sessionId) {
@@ -534,11 +602,20 @@ export function registerPlan(program: Command): void {
         await planner.handleMessage(message);
       });
 
+      // Start monitor + periodic planner health check
+      monitor.start();
+      const plannerMonitorTimer = setInterval(() => {
+        planner.monitor().catch(() => {});
+      }, 30_000);
+
       // Graceful shutdown
       let shuttingDown = false;
       async function cleanup() {
         if (shuttingDown) return;
         shuttingDown = true;
+
+        monitor.stop();
+        clearInterval(plannerMonitorTimer);
 
         // Unsubscribe from all output streams
         for (const sid of followedSessions) {
