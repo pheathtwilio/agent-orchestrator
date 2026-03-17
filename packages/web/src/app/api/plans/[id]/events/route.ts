@@ -91,9 +91,13 @@ export async function GET(
 
     for (const sessionId of activeSessions) {
       outputSessions.add(sessionId);
-      await messageBus.subscribeOutput(sessionId, (data) => {
+      // The sidecar publishes to ao:output:<AO_SESSION_ID> where AO_SESSION_ID
+      // is the raw session ID (e.g. "om-1"), but assignedTo stores the container
+      // name (e.g. "ao-om-1"). Strip the "ao-" prefix to match the sidecar channel.
+      const sidecarId = sessionId.startsWith("ao-") ? sessionId.slice(3) : sessionId;
+      await messageBus.subscribeOutput(sidecarId, (data) => {
         send(controller, "agent_output", {
-          sessionId: data.sessionId,
+          sessionId,
           timestamp: data.timestamp,
           line: data.line,
         });
@@ -195,7 +199,8 @@ export async function GET(
     clearInterval(poller);
     void (async () => {
       for (const sid of outputSessions) {
-        await messageBus.unsubscribeOutput(sid).catch(() => {});
+        const sidecarId = sid.startsWith("ao-") ? sid.slice(3) : sid;
+        await messageBus.unsubscribeOutput(sidecarId).catch(() => {});
       }
       outputSessions.clear();
       await messageBus.disconnect().catch(() => {});
