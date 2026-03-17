@@ -91,8 +91,15 @@ function groupTasks(tasks: PlanTask[]) {
 
 // ── Main Component ──
 
+interface ProjectInfo {
+  id: string;
+  name: string;
+  repo: string;
+}
+
 export function PlansDashboard() {
   const [plans, setPlans] = useState<PlanListItem[]>([]);
+  const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [locks, setLocks] = useState<FileLock[]>([]);
   const [deadlocks, setDeadlocks] = useState<string[][]>([]);
@@ -133,6 +140,10 @@ export function PlansDashboard() {
   }, []);
 
   useEffect(() => {
+    fetch("/api/projects")
+      .then((r) => r.json())
+      .then((data) => setProjects(data.projects ?? []))
+      .catch(() => {});
     fetchPlans();
     fetchLocks();
     const interval = setInterval(() => {
@@ -141,6 +152,8 @@ export function PlansDashboard() {
     }, 10000);
     return () => clearInterval(interval);
   }, [fetchPlans, fetchLocks]);
+
+  const primaryProject = projects[0];
 
   async function archivePlan(planId: string) {
     await fetch(`/api/plans/${planId}/archive`, { method: "POST" });
@@ -216,7 +229,12 @@ export function PlansDashboard() {
     <div className="min-h-screen bg-bg-base text-zinc-100 p-6">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold">Plan Orchestrator</h1>
+        <div>
+          <h1 className="text-2xl font-bold">Plan Orchestrator</h1>
+          {primaryProject && (
+            <p className="text-xs text-zinc-500 mt-0.5 font-mono">{primaryProject.repo}</p>
+          )}
+        </div>
         <div className="flex items-center gap-3">
           {selectedPlanId && <ConnectionDot connected={connected} />}
           <button
@@ -246,6 +264,7 @@ export function PlansDashboard() {
           <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 w-full max-w-lg shadow-2xl">
             <h2 className="text-lg font-semibold text-zinc-200 mb-4">Create Plan</h2>
             <CreatePlanForm
+              projects={projects}
               onCreated={(planId) => {
                 setShowCreateForm(false);
                 setSelectedPlanId(planId);

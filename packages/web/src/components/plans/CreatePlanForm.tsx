@@ -3,25 +3,35 @@
 import { useState, memo } from "react";
 import { cn } from "@/lib/cn";
 
+interface ProjectInfo {
+  id: string;
+  name: string;
+  repo: string;
+}
+
 interface CreatePlanFormProps {
+  projects: ProjectInfo[];
   onCreated: (planId: string) => void;
   onCancel: () => void;
 }
 
 export const CreatePlanForm = memo(function CreatePlanForm({
+  projects,
   onCreated,
   onCancel,
 }: CreatePlanFormProps) {
-  const [project, setProject] = useState("");
+  const [project, setProject] = useState(projects[0]?.id ?? "");
   const [description, setDescription] = useState("");
   const [skipTesting, setSkipTesting] = useState(false);
   const [maxConcurrency, setMaxConcurrency] = useState(5);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const selectedProject = projects.find((p) => p.id === project);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!project.trim() || !description.trim()) return;
+    if (!project || !description.trim()) return;
 
     setSubmitting(true);
     setError(null);
@@ -31,7 +41,7 @@ export const CreatePlanForm = memo(function CreatePlanForm({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          project: project.trim(),
+          project,
           description: description.trim(),
           skipTesting,
           maxConcurrency,
@@ -58,14 +68,27 @@ export const CreatePlanForm = memo(function CreatePlanForm({
       {/* Project */}
       <div>
         <label className="block text-xs text-zinc-400 mb-1">Project</label>
-        <input
-          type="text"
-          value={project}
-          onChange={(e) => setProject(e.target.value)}
-          placeholder="e.g. agent-orchestrator"
-          className="w-full bg-zinc-900 border border-zinc-700 rounded-md px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:border-cyan-600 focus:outline-none focus:ring-1 focus:ring-cyan-600/30"
-          disabled={submitting}
-        />
+        {projects.length <= 1 ? (
+          <div className="flex items-center gap-2 px-3 py-2 bg-zinc-900 border border-zinc-700 rounded-md">
+            <span className="text-sm text-zinc-200">{selectedProject?.name ?? project}</span>
+            {selectedProject?.repo && (
+              <span className="text-[10px] text-zinc-500 font-mono">{selectedProject.repo}</span>
+            )}
+          </div>
+        ) : (
+          <select
+            value={project}
+            onChange={(e) => setProject(e.target.value)}
+            className="w-full bg-zinc-900 border border-zinc-700 rounded-md px-3 py-2 text-sm text-zinc-200 focus:border-cyan-600 focus:outline-none focus:ring-1 focus:ring-cyan-600/30"
+            disabled={submitting}
+          >
+            {projects.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} ({p.repo})
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
       {/* Description */}
@@ -78,6 +101,7 @@ export const CreatePlanForm = memo(function CreatePlanForm({
           rows={4}
           className="w-full bg-zinc-900 border border-zinc-700 rounded-md px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:border-cyan-600 focus:outline-none focus:ring-1 focus:ring-cyan-600/30 resize-none"
           disabled={submitting}
+          autoFocus
         />
       </div>
 
@@ -121,10 +145,10 @@ export const CreatePlanForm = memo(function CreatePlanForm({
       <div className="flex gap-2 pt-1">
         <button
           type="submit"
-          disabled={submitting || !project.trim() || !description.trim()}
+          disabled={submitting || !project || !description.trim()}
           className={cn(
             "px-4 py-2 rounded-md text-xs font-medium transition-colors",
-            submitting || !project.trim() || !description.trim()
+            submitting || !project || !description.trim()
               ? "bg-zinc-800 text-zinc-600 cursor-not-allowed"
               : "bg-cyan-600 text-white hover:bg-cyan-500",
           )}
