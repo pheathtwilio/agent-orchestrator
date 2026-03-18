@@ -105,6 +105,14 @@ export const SwimLane = memo(function SwimLane({
           {isActive && latestActivity && (
             <span className="text-[10px] text-cyan-500/80 block truncate italic">{latestActivity}</span>
           )}
+          {(isDone || isFailed) && task.result?.summary && (
+            <span className={cn(
+              "text-[10px] block truncate",
+              isDone ? "text-green-500/70" : "text-red-400/70",
+            )}>
+              {task.result.summary.slice(0, 120)}
+            </span>
+          )}
         </div>
 
         {/* Status label */}
@@ -186,6 +194,21 @@ export const SwimLane = memo(function SwimLane({
               </span>
             )}
           </div>
+
+          {/* Agent summary */}
+          {task.result?.summary && (
+            <div className={cn(
+              "text-[11px] leading-relaxed p-2 rounded border",
+              task.status === "failed"
+                ? "bg-red-950/20 border-red-800/30 text-red-300/80"
+                : "bg-green-950/20 border-green-800/30 text-green-300/80",
+            )}>
+              <div className="whitespace-pre-wrap break-words">{task.result.summary}</div>
+              {task.result.error && (
+                <div className="mt-1 text-red-400/80 font-mono text-[10px]">{task.result.error}</div>
+              )}
+            </div>
+          )}
 
           {/* Token usage */}
           {sessionUsage && (

@@ -72,6 +72,9 @@ export async function GET(
         dependsOn: n.dependsOn,
         fileBoundary: n.fileBoundary,
         updatedAt: n.updatedAt,
+        result: n.result
+          ? { summary: n.result.summary, branch: n.result.branch, error: n.result.error }
+          : null,
       })),
       usage: usage.totals,
       sessionUsage: usage.sessions,

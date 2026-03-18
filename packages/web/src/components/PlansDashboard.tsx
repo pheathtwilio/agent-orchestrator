@@ -26,11 +26,11 @@ interface PlanListItem {
   archived?: boolean;
 }
 
-interface FileLock {
-  filePath: string;
-  owner: string;
-  acquiredAt: number;
-  ageMs: number;
+interface ContainerInfo {
+  name: string;
+  status: string;
+  state: "running" | "exited" | "dead" | "created" | "unknown";
+  uptime: string;
 }
 
 interface BranchInfo {
@@ -107,8 +107,7 @@ export function PlansDashboard() {
   const [plans, setPlans] = useState<PlanListItem[]>([]);
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
-  const [locks, setLocks] = useState<FileLock[]>([]);
-  const [deadlocks, setDeadlocks] = useState<string[][]>([]);
+  const [containers, setContainers] = useState<ContainerInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [followOutput, setFollowOutput] = useState(false);
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
@@ -137,12 +136,11 @@ export function PlansDashboard() {
     setLoading(false);
   }, [showArchived]);
 
-  const fetchLocks = useCallback(async () => {
+  const fetchContainers = useCallback(async () => {
     try {
-      const res = await fetch("/api/plans/locks");
+      const res = await fetch("/api/containers");
       const data = await res.json();
-      setLocks(data.locks ?? []);
-      setDeadlocks(data.deadlocks ?? []);
+      setContainers(data.containers ?? []);
     } catch {
       // Retry next poll
     }
@@ -165,15 +163,15 @@ export function PlansDashboard() {
       .then((data) => setProjects(data.projects ?? []))
       .catch(() => {});
     fetchPlans();
-    fetchLocks();
+    fetchContainers();
     fetchBranches();
     const interval = setInterval(() => {
       fetchPlans();
-      fetchLocks();
+      fetchContainers();
       fetchBranches();
     }, 10000);
     return () => clearInterval(interval);
-  }, [fetchPlans, fetchLocks, fetchBranches]);
+  }, [fetchPlans, fetchContainers, fetchBranches]);
 
   const primaryProject = projects[0];
 
@@ -290,18 +288,6 @@ export function PlansDashboard() {
         </div>
       </div>
 
-      {/* Deadlock warning */}
-      {deadlocks.length > 0 && (
-        <div className="bg-red-900/30 border border-red-700 rounded-lg p-4 mb-6">
-          <h3 className="text-red-400 font-semibold mb-2">Deadlocks Detected</h3>
-          {deadlocks.map((cycle, i) => (
-            <p key={i} className="text-red-300 text-sm">
-              {cycle.join(" \u2192 ")} \u2192 {cycle[0]}
-            </p>
-          ))}
-        </div>
-      )}
-
       {/* Create plan modal */}
       {showCreateForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -410,24 +396,47 @@ export function PlansDashboard() {
             )}
           </div>
 
-          {/* File locks */}
-          {locks.length > 0 && (
+          {/* Containers */}
+          {containers.length > 0 && (
             <div>
               <h2 className="text-sm font-semibold mb-2 text-zinc-400 uppercase tracking-wider">
-                File Locks
+                Containers
+                <span className="text-[10px] text-zinc-600 font-normal ml-2">{containers.length}</span>
               </h2>
-              <div className="space-y-1">
-                {locks.map((lock) => (
-                  <div
-                    key={lock.filePath}
-                    className="flex justify-between text-[10px] p-1.5 bg-zinc-900/50 rounded border border-zinc-800/50"
-                  >
-                    <span className="text-zinc-400 truncate">{lock.filePath}</span>
-                    <span className="text-zinc-600 ml-2 whitespace-nowrap">
-                      {Math.round(lock.ageMs / 1000)}s
-                    </span>
-                  </div>
-                ))}
+              <div className="space-y-1 max-h-48 overflow-y-auto">
+                {containers.map((c) => {
+                  const alive = c.state === "running";
+                  return (
+                    <div
+                      key={c.name}
+                      className={cn(
+                        "text-[10px] p-1.5 rounded border",
+                        alive
+                          ? "bg-cyan-950/10 border-cyan-800/30"
+                          : "bg-zinc-900/50 border-zinc-800/50 opacity-60",
+                      )}
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className={cn(
+                            "w-1.5 h-1.5 rounded-full flex-shrink-0",
+                            alive ? "bg-green-400" : "bg-zinc-600",
+                          )}
+                        />
+                        <span className="font-mono text-zinc-300 truncate">{c.name}</span>
+                      </div>
+                      <div className="flex justify-between mt-0.5 pl-3">
+                        <span className={cn(
+                          "truncate",
+                          alive ? "text-cyan-500/70" : "text-zinc-600",
+                        )}>
+                          {c.status}
+                        </span>
+                        <span className="text-zinc-700 whitespace-nowrap ml-2">{c.uptime}</span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}

@@ -16,6 +16,7 @@ export interface PlanTask {
   dependsOn: string[];
   fileBoundary: string[];
   updatedAt: number;
+  result: { summary: string; branch: string; error?: string } | null;
 }
 
 export interface UsageTotals {
