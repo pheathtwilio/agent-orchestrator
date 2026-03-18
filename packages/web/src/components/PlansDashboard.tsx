@@ -188,7 +188,6 @@ export function PlansDashboard() {
 
   async function cancelPlan(planId: string) {
     await fetch(`/api/plans/${planId}/cancel`, { method: "POST" });
-    setSelectedPlanId(null);
     fetchPlans();
   }
 
