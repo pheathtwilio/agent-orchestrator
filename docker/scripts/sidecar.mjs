@@ -5,9 +5,10 @@
  * Responsibilities:
  * 1. Watches /tmp/ao-inbox for orchestrator→agent messages
  * 2. Publishes heartbeats to Redis so the monitor knows we're alive
- * 3. Captures token usage from Claude Code JSON output
- * 4. When the agent process exits, publishes TASK_COMPLETE or TASK_FAILED
- * 5. Forwards ABORT messages by sending SIGTERM to the agent process
+ * 3. Parses Claude Code stream-json output for real-time telemetry
+ * 4. Detects long-running tool calls and subprocess hangs
+ * 5. When the agent process exits, publishes TASK_COMPLETE or TASK_FAILED
+ * 6. Forwards ABORT messages by sending SIGTERM to the agent process
  *
  * Environment variables (set by the runtime plugin):
  *   REDIS_URL        — Redis connection string (default: redis://ao-redis:6379)
@@ -18,7 +19,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { spawn, execFileSync } from "node:child_process";
+import { spawn, execFileSync, execSync } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { createRequire } from "node:module";
 
@@ -44,6 +45,8 @@ const TASK_ID = process.env.AO_TASK_ID ?? "";
 const SKILL = process.env.AO_SKILL ?? "fullstack";
 
 const HEARTBEAT_INTERVAL_MS = 15_000;
+const PROCESS_MONITOR_INTERVAL_MS = 10_000;
+const TOOL_LONG_RUNNING_MS = 5 * 60 * 1000; // 5 minutes
 const INBOX_PATH = "/tmp/ao-inbox";
 const INBOX_POLL_MS = 2_000;
 const USAGE_KEY = `ao:usage:${PLAN_ID}`;
@@ -59,35 +62,55 @@ let sessionUsage = {
   costUsd: 0,
 };
 
-// Keep track of the last few output lines for activity reporting
-const recentLines = [];
-const MAX_RECENT_LINES = 5;
+// ---------------------------------------------------------------------------
+// Tool call tracking (from stream-json events)
+// ---------------------------------------------------------------------------
+/** @type {Map<string, {name: string, startedAt: number, input: string}>} */
+const activeToolCalls = new Map();
 
-function trackLine(line) {
-  recentLines.push(line);
-  if (recentLines.length > MAX_RECENT_LINES) {
-    recentLines.shift();
+/** @type {{name: string, durationMs: number}|null} */
+let lastCompletedTool = null;
+
+/** Current agent phase derived from stream-json events */
+let agentPhase = "starting"; // starting | thinking | tool_use | idle
+
+// Keep last few activity descriptions for heartbeat
+const recentActivities = [];
+const MAX_RECENT_ACTIVITIES = 5;
+
+function pushActivity(desc) {
+  recentActivities.push(desc);
+  if (recentActivities.length > MAX_RECENT_ACTIVITIES) {
+    recentActivities.shift();
   }
 }
 
-/** Try to parse a JSON result line from Claude Code --output-format json */
-function tryParseUsage(line) {
+// ---------------------------------------------------------------------------
+// Process monitoring
+// ---------------------------------------------------------------------------
+let agentPid = null;
+
+/** Get child processes of the agent, looking for long-running ones */
+function getChildProcesses() {
+  if (!agentPid) return [];
   try {
-    const data = JSON.parse(line);
-    if (data.type === "result" && data.usage) {
-      sessionUsage = {
-        inputTokens: data.usage.input_tokens ?? 0,
-        outputTokens: data.usage.output_tokens ?? 0,
-        cacheReadTokens: data.usage.cache_read_input_tokens ?? 0,
-        cacheCreationTokens: data.usage.cache_creation_input_tokens ?? 0,
-        costUsd: data.total_cost_usd ?? 0,
-      };
-      return data;
-    }
+    // ps -o pid,etime,comm for child processes
+    const output = execSync(
+      `ps --ppid ${agentPid} -o pid=,etimes=,comm= 2>/dev/null || ps -o pid=,etime=,comm= -p $(pgrep -P ${agentPid} 2>/dev/null | tr '\\n' ',') 2>/dev/null || true`,
+      { encoding: "utf-8", timeout: 3000 },
+    ).trim();
+    if (!output) return [];
+
+    return output.split("\n").filter(Boolean).map((line) => {
+      const parts = line.trim().split(/\s+/);
+      const pid = parts[0];
+      const elapsedSec = parseInt(parts[1], 10) || 0;
+      const comm = parts.slice(2).join(" ");
+      return { pid, elapsedSec, comm };
+    });
   } catch {
-    // Not JSON or not a result — that's fine
+    return [];
   }
-  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -160,6 +183,148 @@ async function updatePlanUsage() {
 }
 
 // ---------------------------------------------------------------------------
+// stream-json event parser
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse a stream-json event line from Claude Code and extract telemetry.
+ * Returns a human-readable description for the output stream, or null to skip.
+ */
+function parseStreamEvent(line) {
+  let data;
+  try {
+    data = JSON.parse(line);
+  } catch {
+    // Not JSON — raw text output, pass through
+    return line;
+  }
+
+  switch (data.type) {
+    case "system": {
+      if (data.subtype === "init") {
+        agentPhase = "idle";
+        return `[init] session=${data.session_id} model=${data.model}`;
+      }
+      return null;
+    }
+
+    case "assistant": {
+      const content = data.message?.content;
+      if (!Array.isArray(content)) return null;
+
+      const parts = [];
+      for (const block of content) {
+        if (block.type === "tool_use") {
+          // Track tool call start
+          activeToolCalls.set(block.id, {
+            name: block.name,
+            startedAt: Date.now(),
+            input: summarizeToolInput(block.name, block.input),
+          });
+          agentPhase = "tool_use";
+          const desc = `[tool] ${block.name}: ${summarizeToolInput(block.name, block.input)}`;
+          pushActivity(desc);
+          parts.push(desc);
+        } else if (block.type === "text" && block.text) {
+          agentPhase = "thinking";
+          // Truncate long text for display
+          const preview = block.text.length > 200 ? block.text.slice(0, 200) + "..." : block.text;
+          parts.push(preview);
+          pushActivity(preview.slice(0, 80));
+        }
+      }
+
+      // Update usage from the message if available
+      if (data.message?.usage) {
+        const u = data.message.usage;
+        sessionUsage.inputTokens += u.input_tokens ?? 0;
+        sessionUsage.outputTokens += u.output_tokens ?? 0;
+        sessionUsage.cacheReadTokens += u.cache_read_input_tokens ?? 0;
+        sessionUsage.cacheCreationTokens += u.cache_creation_input_tokens ?? 0;
+      }
+
+      return parts.join("\n") || null;
+    }
+
+    case "user": {
+      // Tool result — mark tool call as complete
+      const toolUseId = data.message?.content?.[0]?.tool_use_id
+        ?? data.message?.content?.find?.(c => c.tool_use_id)?.tool_use_id;
+      if (toolUseId && activeToolCalls.has(toolUseId)) {
+        const tc = activeToolCalls.get(toolUseId);
+        const durationMs = Date.now() - tc.startedAt;
+        lastCompletedTool = { name: tc.name, durationMs };
+        activeToolCalls.delete(toolUseId);
+
+        if (activeToolCalls.size === 0) {
+          agentPhase = "thinking";
+        }
+
+        // Summarize the tool result
+        const result = data.tool_use_result;
+        if (result) {
+          const desc = `[result] ${tc.name} (${(durationMs / 1000).toFixed(1)}s)`;
+          pushActivity(desc);
+          // Include abbreviated result for streaming
+          if (result.stdout) {
+            const lines = result.stdout.split("\n").filter(Boolean);
+            if (lines.length <= 3) {
+              return `${desc}: ${result.stdout.slice(0, 200)}`;
+            }
+            return `${desc}: ${lines.length} lines`;
+          }
+          return desc;
+        }
+        return `[result] ${tc.name} (${(durationMs / 1000).toFixed(1)}s)`;
+      }
+      return null;
+    }
+
+    case "result": {
+      agentPhase = "complete";
+      // Final result — extract usage totals
+      if (data.usage) {
+        sessionUsage = {
+          inputTokens: data.usage.input_tokens ?? sessionUsage.inputTokens,
+          outputTokens: data.usage.output_tokens ?? sessionUsage.outputTokens,
+          cacheReadTokens: data.usage.cache_read_input_tokens ?? sessionUsage.cacheReadTokens,
+          cacheCreationTokens: data.usage.cache_creation_input_tokens ?? sessionUsage.cacheCreationTokens,
+          costUsd: data.total_cost_usd ?? sessionUsage.costUsd,
+        };
+      }
+      return data.result
+        ? `[complete] ${data.result.slice(0, 300)}`
+        : `[complete] ${data.subtype}`;
+    }
+
+    default:
+      return null;
+  }
+}
+
+/** Create a short summary of tool input for display */
+function summarizeToolInput(toolName, input) {
+  if (!input) return "";
+  switch (toolName) {
+    case "Bash":
+      return input.command?.slice(0, 120) ?? "";
+    case "Read":
+      return input.file_path?.split("/").pop() ?? "";
+    case "Write":
+    case "Edit":
+      return input.file_path?.split("/").pop() ?? "";
+    case "Grep":
+      return `/${input.pattern}/ in ${input.path?.split("/").pop() ?? "."}`;
+    case "Glob":
+      return input.pattern ?? "";
+    case "Agent":
+      return input.description ?? "";
+    default:
+      return JSON.stringify(input).slice(0, 80);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Inbox watcher — reads orchestrator messages from /tmp/ao-inbox
 // ---------------------------------------------------------------------------
 let lastInboxSize = 0;
@@ -217,10 +382,10 @@ function launchAgent() {
     writeFileSync(promptFile, prompt);
 
     // The launch command comes as: bash -c "claude --dangerously-skip-permissions ..."
-    // Inject the prompt file via -p flag and --output-format json for token tracking
+    // Inject the prompt file via -p flag and --output-format stream-json for telemetry
     if (args[0] === "bash" && args[1] === "-c" && args[2]?.includes("claude")) {
-      args[2] = `${args[2]} --output-format json -p "$(cat /tmp/ao-prompt.txt)"`;
-      console.log(`[sidecar] Injected prompt (${prompt.length} chars) via -p flag with JSON output`);
+      args[2] = `${args[2]} --output-format stream-json --verbose -p "$(cat /tmp/ao-prompt.txt)"`;
+      console.log(`[sidecar] Injected prompt (${prompt.length} chars) via -p flag with stream-json output`);
     }
   }
 
@@ -234,37 +399,60 @@ function launchAgent() {
     env: process.env,
   });
 
+  agentPid = agentProcess.pid;
   const outputChannel = `ao:output:${SESSION_ID}`;
 
-  // Track the last stdout line — Claude Code JSON result will be the final line
-  let lastStdoutLine = "";
+  // Track the last result data for completion reporting
+  let lastResultData = null;
 
   function streamOutput(stream, label) {
     let buffer = "";
     stream.on("data", (chunk) => {
       const text = chunk.toString();
+      // Always mirror to our own stdout/stderr for docker logs
       process[label === "stderr" ? "stderr" : "stdout"].write(text);
 
-      // Buffer and publish complete lines
+      // Buffer and process complete lines
       buffer += text;
       const lines = buffer.split("\n");
       buffer = lines.pop() ?? "";
-      for (const line of lines) {
-        if (line.trim()) {
-          publishOutput(outputChannel, line);
-          trackLine(line.trim());
-          if (label === "stdout") {
-            lastStdoutLine = line.trim();
+      for (const rawLine of lines) {
+        if (!rawLine.trim()) continue;
+
+        if (label === "stdout") {
+          // Parse stream-json events for telemetry
+          const parsed = parseStreamEvent(rawLine);
+          if (parsed) {
+            publishOutput(outputChannel, parsed);
           }
+
+          // Check for final result to capture usage/summary
+          try {
+            const data = JSON.parse(rawLine);
+            if (data.type === "result") {
+              lastResultData = data;
+            }
+          } catch {
+            // Not JSON — that's fine
+          }
+        } else {
+          // stderr goes through as-is
+          publishOutput(outputChannel, `[stderr] ${rawLine}`);
+          pushActivity(`[stderr] ${rawLine.slice(0, 80)}`);
         }
       }
     });
     stream.on("end", () => {
       if (buffer.trim()) {
-        publishOutput(outputChannel, buffer);
-        trackLine(buffer.trim());
         if (label === "stdout") {
-          lastStdoutLine = buffer.trim();
+          const parsed = parseStreamEvent(buffer);
+          if (parsed) publishOutput(outputChannel, parsed);
+          try {
+            const data = JSON.parse(buffer);
+            if (data.type === "result") lastResultData = data;
+          } catch { /* ignore */ }
+        } else {
+          publishOutput(outputChannel, `[stderr] ${buffer}`);
         }
       }
     });
@@ -276,12 +464,21 @@ function launchAgent() {
   agentProcess.on("exit", async (code, signal) => {
     console.log(`[sidecar] Agent exited with code=${code} signal=${signal}`);
 
-    // Stop heartbeat
+    // Stop timers
     clearInterval(heartbeatTimer);
+    clearInterval(processMonitorTimer);
 
-    // Try to parse token usage from the last stdout line (JSON output)
-    const resultData = tryParseUsage(lastStdoutLine);
-    if (resultData) {
+    // Extract usage from the final result event
+    if (lastResultData) {
+      if (lastResultData.usage) {
+        sessionUsage = {
+          inputTokens: lastResultData.usage.input_tokens ?? 0,
+          outputTokens: lastResultData.usage.output_tokens ?? 0,
+          cacheReadTokens: lastResultData.usage.cache_read_input_tokens ?? 0,
+          cacheCreationTokens: lastResultData.usage.cache_creation_input_tokens ?? 0,
+          costUsd: lastResultData.total_cost_usd ?? 0,
+        };
+      }
       console.log(`[sidecar] Token usage — input: ${sessionUsage.inputTokens}, output: ${sessionUsage.outputTokens}, cost: $${sessionUsage.costUsd.toFixed(4)}`);
     }
 
@@ -308,8 +505,8 @@ function launchAgent() {
       await publishToOrchestrator("TASK_COMPLETE", {
         branch: gitInfo.branch,
         commits: gitInfo.commits,
-        summary: resultData?.result
-          ? resultData.result.slice(0, 500)
+        summary: lastResultData?.result
+          ? lastResultData.result.slice(0, 500)
           : `Task ${TASK_ID} completed successfully (skill: ${SKILL})`,
         usage: sessionUsage,
       });
@@ -331,17 +528,40 @@ function launchAgent() {
 }
 
 // ---------------------------------------------------------------------------
-// Heartbeat
+// Heartbeat — includes telemetry from stream-json parsing
 // ---------------------------------------------------------------------------
 let heartbeatTimer;
 
 function startHeartbeat() {
   heartbeatTimer = setInterval(async () => {
+    // Build tool call state for the heartbeat
+    const activeTools = [];
+    const now = Date.now();
+    for (const [id, tc] of activeToolCalls) {
+      const runningMs = now - tc.startedAt;
+      activeTools.push({
+        name: tc.name,
+        input: tc.input.slice(0, 100),
+        runningMs,
+      });
+    }
+
+    // Flag any tool running longer than the threshold
+    const longRunningTool = activeTools.find((t) => t.runningMs > TOOL_LONG_RUNNING_MS);
+
     await publishToOrchestrator("PROGRESS_UPDATE", {
-      status: "alive",
+      status: longRunningTool ? "tool_hung" : "alive",
       skill: SKILL,
+      agentPhase,
       usage: sessionUsage,
-      recentActivity: recentLines.slice(-3).join(" | "),
+      activeTools,
+      lastCompletedTool: lastCompletedTool
+        ? { name: lastCompletedTool.name, durationMs: lastCompletedTool.durationMs }
+        : null,
+      recentActivity: recentActivities.slice(-3).join(" | "),
+      longRunningTool: longRunningTool
+        ? { name: longRunningTool.name, runningMs: longRunningTool.runningMs, input: longRunningTool.input }
+        : null,
     });
 
     // Periodically persist usage
@@ -350,6 +570,38 @@ function startHeartbeat() {
 
   // Don't let the heartbeat timer prevent process exit
   heartbeatTimer.unref();
+}
+
+// ---------------------------------------------------------------------------
+// Process monitor — detect hung subprocesses
+// ---------------------------------------------------------------------------
+let processMonitorTimer;
+
+function startProcessMonitor() {
+  processMonitorTimer = setInterval(async () => {
+    const children = getChildProcesses();
+    const longRunning = children.filter((p) => p.elapsedSec > 300); // >5 min
+
+    if (longRunning.length > 0) {
+      const procs = longRunning.map((p) => `${p.comm}(pid=${p.pid}, ${p.elapsedSec}s)`).join(", ");
+      console.log(`[sidecar] Long-running subprocesses: ${procs}`);
+
+      await publishToOrchestrator("PROGRESS_UPDATE", {
+        status: "subprocess_hung",
+        skill: SKILL,
+        agentPhase,
+        usage: sessionUsage,
+        hungProcesses: longRunning.map((p) => ({
+          pid: p.pid,
+          command: p.comm,
+          elapsedSeconds: p.elapsedSec,
+        })),
+        recentActivity: recentActivities.slice(-3).join(" | "),
+      });
+    }
+  }, PROCESS_MONITOR_INTERVAL_MS);
+
+  processMonitorTimer.unref();
 }
 
 // ---------------------------------------------------------------------------
@@ -390,6 +642,7 @@ async function main() {
 
   startHeartbeat();
   startInboxWatcher();
+  startProcessMonitor();
   launchAgent();
 }
 

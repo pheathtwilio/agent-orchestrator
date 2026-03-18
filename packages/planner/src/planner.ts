@@ -1377,6 +1377,50 @@ export function createPlanner(
               sessionActivity.set(sid, Date.now());
             }
           }
+
+          // Immediate stuck detection from sidecar telemetry
+          const progressStatus = message.payload.status as string;
+          if (
+            taskId &&
+            (progressStatus === "tool_hung" || progressStatus === "subprocess_hung") &&
+            plan.phase === "executing"
+          ) {
+            const sid = plan.activeSessions.get(taskId);
+            const detail = progressStatus === "tool_hung"
+              ? `Tool call running too long: ${(message.payload.longRunningTool as { name: string; input: string })?.name ?? "unknown"}`
+              : `Subprocess hung: ${((message.payload.hungProcesses as { command: string }[]) ?? []).map(p => p.command).join(", ")}`;
+
+            emit({
+              type: "agent_stuck",
+              planId,
+              taskId,
+              sessionId: sid,
+              detail: `[telemetry] ${detail} — killing and spawning doctor`,
+            });
+
+            if (sid) {
+              try {
+                await deps.killSession(sid);
+              } catch { /* container may already be gone */ }
+              plan.activeSessions.delete(taskId);
+              sessionActivity.delete(sid);
+            }
+            await deps.fileLocks.releaseAll(taskId);
+
+            // Mark task failed and spawn doctor for investigation
+            await deps.taskStore.updateTask(plan.taskGraph.id, taskId, {
+              status: "failed",
+              assignedTo: null,
+            });
+            const node = plan.taskGraph.nodes.find((n) => n.id === taskId);
+            if (node) node.status = "failed";
+
+            if (!taskId.startsWith("doctor-") && taskId !== "integration-test" && taskId !== "verify-build") {
+              await spawnDoctorAgent(plan, taskId, `${detail}`, {
+                lastActivity: (message.payload.recentActivity as string) ?? "",
+              });
+            }
+          }
           break;
         }
 

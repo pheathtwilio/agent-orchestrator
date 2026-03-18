@@ -109,7 +109,7 @@ export function PlansDashboard() {
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [containers, setContainers] = useState<ContainerInfo[]>([]);
   const [loading, setLoading] = useState(true);
-  const [followOutput, setFollowOutput] = useState(false);
+  const [followOutput, setFollowOutput] = useState(true);
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
   const [activeTab, setActiveTab] = useState<"lanes" | "log" | "summary">("lanes");
   const [showCreateForm, setShowCreateForm] = useState(false);
