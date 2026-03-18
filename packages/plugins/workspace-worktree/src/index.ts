@@ -46,6 +46,56 @@ function expandPath(p: string): string {
   return p;
 }
 
+/**
+ * If a branch is already checked out by another worktree, forcibly remove that
+ * worktree. This handles the case where a container died without cleanup and
+ * a resume/retry needs to reuse the same branch.
+ */
+async function removeStaleWorktreeForBranch(
+  repoPath: string,
+  branch: string,
+  newWorktreePath: string,
+): Promise<void> {
+  let listOutput: string;
+  try {
+    listOutput = await git(repoPath, "worktree", "list", "--porcelain");
+  } catch {
+    return;
+  }
+
+  const blocks = listOutput.split("\n\n");
+  for (const block of blocks) {
+    const lines = block.trim().split("\n");
+    let path = "";
+    let worktreeBranch = "";
+
+    for (const line of lines) {
+      if (line.startsWith("worktree ")) {
+        path = line.slice("worktree ".length);
+      } else if (line.startsWith("branch ")) {
+        worktreeBranch = line.slice("branch ".length).replace("refs/heads/", "");
+      }
+    }
+
+    // Found a worktree using our branch that isn't the one we're about to create
+    if (worktreeBranch === branch && path && path !== newWorktreePath && path !== repoPath) {
+      try {
+        await git(repoPath, "worktree", "remove", "--force", path);
+      } catch {
+        // If git remove fails, try removing the directory directly and pruning
+        if (existsSync(path)) {
+          rmSync(path, { recursive: true, force: true });
+        }
+        try {
+          await git(repoPath, "worktree", "prune");
+        } catch {
+          // Best effort
+        }
+      }
+    }
+  }
+}
+
 export function create(config?: Record<string, unknown>): Workspace {
   const worktreeBaseDir = config?.worktreeDir
     ? expandPath(config.worktreeDir as string)
@@ -71,6 +121,18 @@ export function create(config?: Record<string, unknown>): Workspace {
         // Fetch may fail if offline — continue anyway
       }
 
+      // Prune stale worktree entries (containers that died without cleanup)
+      try {
+        await git(repoPath, "worktree", "prune");
+      } catch {
+        // Best effort
+      }
+
+      // If the branch is already checked out in another worktree, remove that
+      // stale worktree first. This happens when a container dies without cleanup
+      // and resume/retry spawns a new agent on the same branch.
+      await removeStaleWorktreeForBranch(repoPath, cfg.branch, worktreePath);
+
       const baseRef = `origin/${cfg.project.defaultBranch}`;
 
       // Create worktree with a new branch
@@ -85,20 +147,12 @@ export function create(config?: Record<string, unknown>): Workspace {
           });
         }
         // Branch already exists — create worktree and check it out
-        await git(repoPath, "worktree", "add", worktreePath, baseRef);
         try {
-          await git(worktreePath, "checkout", cfg.branch);
-        } catch (checkoutErr: unknown) {
-          // Checkout failed — remove the orphaned worktree before rethrowing
-          try {
-            await git(repoPath, "worktree", "remove", "--force", worktreePath);
-          } catch {
-            // Best-effort cleanup
-          }
-          const checkoutMsg =
-            checkoutErr instanceof Error ? checkoutErr.message : String(checkoutErr);
-          throw new Error(`Failed to checkout branch "${cfg.branch}" in worktree: ${checkoutMsg}`, {
-            cause: checkoutErr,
+          await git(repoPath, "worktree", "add", worktreePath, cfg.branch);
+        } catch (addErr: unknown) {
+          const addMsg = addErr instanceof Error ? addErr.message : String(addErr);
+          throw new Error(`Failed to add worktree for existing branch "${cfg.branch}": ${addMsg}`, {
+            cause: addErr,
           });
         }
       }
