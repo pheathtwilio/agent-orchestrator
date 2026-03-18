@@ -117,6 +117,7 @@ export function PlansDashboard() {
   const [showArchived, setShowArchived] = useState(false);
   const [branches, setBranches] = useState<BranchInfo[]>([]);
   const [defaultBranch, setDefaultBranch] = useState<string>("main");
+  const [restartingWatchers, setRestartingWatchers] = useState(false);
 
   // SSE connection for the selected plan
   const { snapshot, messages, outputLines, connected } = usePlanEvents(
@@ -475,6 +476,29 @@ export function PlansDashboard() {
               </div>
             </div>
           )}
+
+          {/* Dev tools */}
+          <div className="pt-2 border-t border-zinc-800/50">
+            <button
+              onClick={async () => {
+                setRestartingWatchers(true);
+                try {
+                  const res = await fetch("/api/plans/restart-watchers", { method: "POST" });
+                  const data = await res.json();
+                  console.log("[restart-watchers]", data);
+                } finally {
+                  setRestartingWatchers(false);
+                }
+              }}
+              disabled={restartingWatchers}
+              className="w-full px-2.5 py-1.5 rounded text-[10px] font-medium text-amber-400 border border-amber-800/50 hover:bg-amber-900/30 transition-colors disabled:opacity-50"
+            >
+              {restartingWatchers ? "Restarting..." : "Restart Watchers"}
+            </button>
+            <p className="text-[9px] text-zinc-600 mt-1">
+              Reload plan watchers with latest code
+            </p>
+          </div>
         </div>
 
         {/* ── Main content area ── */}

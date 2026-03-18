@@ -202,6 +202,111 @@ export function stopPlanWatcher(planId: string): void {
   if (watcher) watcher.stop();
 }
 
+/** Get list of currently watched plan IDs */
+export function getActiveWatcherIds(): string[] {
+  return Array.from(activeWatchers.keys());
+}
+
+/**
+ * Restart watchers for all in-progress plans.
+ * Stops existing watchers and creates fresh planner instances with latest code.
+ * Use after deploying code changes to pick up new planner logic.
+ */
+export async function restartAllWatchers(
+  opts: { skipTesting: boolean; maxConcurrency: number },
+): Promise<{ restarted: string[]; skipped: string[] }> {
+  const taskStore = createTaskStore(REDIS_URL);
+  const restarted: string[] = [];
+  const skipped: string[] = [];
+
+  try {
+    // Stop all existing watchers
+    const currentIds = Array.from(activeWatchers.keys());
+    for (const id of currentIds) {
+      const watcher = activeWatchers.get(id);
+      if (watcher) watcher.stop();
+    }
+
+    // Find all plans that are still in progress
+    const graphs = await taskStore.listGraphs();
+    const archivedSet = await taskStore.listArchivedIds();
+
+    for (const graph of graphs) {
+      if (archivedSet.has(graph.id)) continue;
+
+      const hasActive = graph.nodes.some((n) =>
+        ["in_progress", "assigned", "testing", "pending"].includes(n.status),
+      );
+      const allTerminal = graph.nodes.every((n) =>
+        ["complete", "failed"].includes(n.status),
+      );
+
+      if (allTerminal || !hasActive) {
+        skipped.push(graph.id);
+        continue;
+      }
+
+      // Create fresh planner + watch loop for this plan
+      const { sessionManager, config } = await getServices();
+      const projectId = Object.keys(config.projects)[0];
+      if (!projectId) continue;
+
+      const messageBus = createMessageBus(REDIS_URL);
+      const fileLocks = createFileLockRegistry(REDIS_URL);
+      const freshTaskStore = createTaskStore(REDIS_URL);
+
+      const planner = createPlanner(
+        {
+          messageBus,
+          fileLocks,
+          taskStore: freshTaskStore,
+          spawnSession: async (params) => {
+            const session = await sessionManager.spawn({
+              projectId: params.projectId,
+              prompt: params.prompt,
+              branch: params.branch,
+              runtimeConfig: { image: params.dockerImage },
+              environment: {
+                ...params.environment,
+                AO_SKILL: params.skill,
+                AO_MODEL: params.model,
+              },
+            });
+            return session.id;
+          },
+          killSession: async (sessionId) => {
+            await sessionManager.kill(sessionId);
+          },
+        },
+        {
+          requireApproval: false,
+          skipIntegrationTest: opts.skipTesting,
+          maxConcurrency: opts.maxConcurrency,
+        },
+      );
+
+      planner.onEvent((event: PlannerEvent) => {
+        console.log(`[plan-executor] ${event.type} plan=${event.planId} ${event.detail}`);
+      });
+
+      // Load existing plan state (reconstructs phase, assignments, etc.)
+      await planner.loadPlan(graph.id, projectId);
+
+      // Start fresh watch loop with new planner instance
+      startWatchLoop(graph.id, planner, messageBus, freshTaskStore);
+      restarted.push(graph.id);
+    }
+  } finally {
+    await taskStore.disconnect();
+  }
+
+  console.log(
+    `[plan-executor] Restarted ${restarted.length} watchers, skipped ${skipped.length} terminal plans`,
+  );
+
+  return { restarted, skipped };
+}
+
 /**
  * Retry a plan that was cancelled or failed.
  * Expects all tasks to already be reset to "pending".
