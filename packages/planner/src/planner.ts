@@ -804,16 +804,21 @@ export function createPlanner(
         });
       }
 
-      // Infer phase from task statuses
+      // Infer phase from task statuses.
+      // in_progress/assigned/testing takes priority over failed — a plan with
+      // active agents (including doctor agents) is still executing.
       const hasInProgress = graph.nodes.some((n) =>
         n.status === "in_progress" || n.status === "assigned" || n.status === "testing",
       );
+      const hasPending = graph.nodes.some((n) => n.status === "pending");
       const allComplete = graph.nodes.every((n) => n.status === "complete");
       const hasFailed = graph.nodes.some((n) => n.status === "failed");
+      const allTerminal = graph.nodes.every((n) => n.status === "complete" || n.status === "failed");
       let phase: PlanPhase;
       if (allComplete) phase = "complete";
+      else if (hasInProgress) phase = "executing";
+      else if (hasPending && !allTerminal) phase = "executing";
       else if (hasFailed) phase = "failed";
-      else if (hasInProgress || graph.nodes.some((n) => n.assignedTo !== null)) phase = "executing";
       else phase = "review";
 
       // Reconstruct activeSessions from nodes that have an assigned agent
@@ -926,6 +931,11 @@ export function createPlanner(
                 status: "pending",
                 assignedTo: null,
               });
+            }
+
+            // Ensure plan is in executing phase so the monitor and spawnReadyTasks work
+            if (plan.phase === "failed") {
+              plan.phase = "executing";
             }
 
             await spawnReadyTasks(plan);
@@ -1168,12 +1178,13 @@ export function createPlanner(
               });
             }
 
+            const originalTaskId = taskId.replace(/^doctor-/, "");
             emit({
               type: "doctor_failed",
               planId,
               taskId,
               sessionId: message.from,
-              detail: `Doctor failed: ${error}`,
+              detail: `Doctor could not fix task ${originalTaskId}: ${error}. Human intervention required — use Resume to retry after manual fix, or Retry All to start fresh.`,
             });
 
             // Don't retry further — the original task stays failed

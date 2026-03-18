@@ -39,7 +39,11 @@ try {
 // Config from environment
 // ---------------------------------------------------------------------------
 const REDIS_URL = process.env.REDIS_URL ?? "redis://ao-redis:6379";
-const SESSION_ID = process.env.AO_SESSION_ID ?? "unknown";
+// AO_SESSION_NAME is the short user-facing ID (e.g. "om-21") that matches
+// what the planner stores as assignedTo. AO_SESSION_ID is the runtime ID
+// (e.g. "1838b7eb0585-om-21") which includes the tmux/config hash prefix.
+// Use the short name for Redis pub/sub channels so the SSE route can subscribe.
+const SESSION_ID = process.env.AO_SESSION_NAME ?? process.env.AO_SESSION_ID ?? "unknown";
 const PLAN_ID = process.env.AO_PLAN_ID ?? "";
 const TASK_ID = process.env.AO_TASK_ID ?? "";
 const SKILL = process.env.AO_SKILL ?? "fullstack";
@@ -225,9 +229,13 @@ function parseStreamEvent(line) {
           const desc = `[tool] ${block.name}: ${summarizeToolInput(block.name, block.input)}`;
           pushActivity(desc);
           parts.push(desc);
-        } else if (block.type === "text" && block.text) {
+        } else if (block.type === "thinking" && block.thinking) {
           agentPhase = "thinking";
-          // Truncate long text for display
+          const preview = block.thinking.length > 200 ? block.thinking.slice(0, 200) + "..." : block.thinking;
+          parts.push(`[thinking] ${preview}`);
+          pushActivity(preview.slice(0, 80));
+        } else if (block.type === "text" && block.text) {
+          agentPhase = "responding";
           const preview = block.text.length > 200 ? block.text.slice(0, 200) + "..." : block.text;
           parts.push(preview);
           pushActivity(preview.slice(0, 80));
