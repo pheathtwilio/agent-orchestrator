@@ -693,6 +693,21 @@ export function createPlanner(
       else if (hasInProgress || graph.nodes.some((n) => n.assignedTo !== null)) phase = "executing";
       else phase = "review";
 
+      // Reconstruct activeSessions from nodes that have an assigned agent
+      const activeSessions = new Map<string, string>();
+      for (const node of graph.nodes) {
+        if (
+          node.assignedTo &&
+          ["assigned", "in_progress", "testing"].includes(node.status)
+        ) {
+          activeSessions.set(node.id, node.assignedTo);
+          // Seed activity timestamp so stuck detection works immediately.
+          // Use the node's updatedAt as the baseline — if the agent hasn't
+          // sent a PROGRESS_UPDATE since then, it's been idle since that time.
+          sessionActivity.set(node.assignedTo, node.updatedAt);
+        }
+      }
+
       const plan: ExecutionPlan = {
         id: planId,
         projectId,
@@ -700,7 +715,7 @@ export function createPlanner(
         phase,
         taskGraph: graph,
         assignments,
-        activeSessions: new Map(),
+        activeSessions,
         createdAt: graph.createdAt,
         updatedAt: graph.updatedAt,
       };

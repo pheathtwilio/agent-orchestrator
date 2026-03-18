@@ -22,6 +22,7 @@ const activeWatchers = new Map<string, { stop: () => void }>();
 // Cache in globalThis for Next.js HMR stability
 const globalForExecutor = globalThis as typeof globalThis & {
   _aoActiveWatchers?: Map<string, { stop: () => void }>;
+  _aoAutoRestartDone?: boolean;
 };
 if (globalForExecutor._aoActiveWatchers) {
   // Restore from previous HMR cycle
@@ -30,6 +31,25 @@ if (globalForExecutor._aoActiveWatchers) {
   }
 }
 globalForExecutor._aoActiveWatchers = activeWatchers;
+
+// Auto-restart watchers for in-progress plans on server startup.
+// Only runs once per process (survives HMR via globalThis flag).
+// Uses dynamic import to avoid referencing restartAllWatchers before it's defined.
+if (!globalForExecutor._aoAutoRestartDone) {
+  globalForExecutor._aoAutoRestartDone = true;
+  setTimeout(async () => {
+    if (activeWatchers.size === 0) {
+      console.log("[plan-executor] Auto-restarting watchers for in-progress plans...");
+      try {
+        // Re-import self to get the fully initialized module
+        const mod = await import("./plan-executor");
+        await mod.restartAllWatchers({ skipTesting: false, maxConcurrency: 5 });
+      } catch (err) {
+        console.error("[plan-executor] Auto-restart failed:", err);
+      }
+    }
+  }, 5000);
+}
 
 export interface ExecutePlanOptions {
   project: string;
