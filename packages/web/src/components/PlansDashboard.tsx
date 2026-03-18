@@ -197,6 +197,11 @@ export function PlansDashboard() {
     fetchPlans();
   }
 
+  async function resumePlanAction(planId: string) {
+    await fetch(`/api/plans/${planId}/resume`, { method: "POST" });
+    fetchPlans();
+  }
+
   // Derive plan detail from SSE snapshot
   const planDetail = snapshot
     ? {
@@ -212,6 +217,14 @@ export function PlansDashboard() {
   const isTerminal = planDetail
     ? planDetail.tasks.every((t) => ["complete", "failed"].includes(t.status))
     : false;
+
+  const hasFailedTasks = planDetail
+    ? planDetail.tasks.some((t) => t.status === "failed")
+    : false;
+  const hasCompletedTasks = planDetail
+    ? planDetail.tasks.some((t) => t.status === "complete")
+    : false;
+  const canResume = isTerminal && hasFailedTasks && hasCompletedTasks;
 
   const groups = planDetail ? groupTasks(planDetail.tasks) : null;
 
@@ -535,12 +548,22 @@ export function PlansDashboard() {
                       Cancel
                     </button>
                   ) : (
-                    <button
-                      onClick={() => retryPlan(planDetail.id)}
-                      className="px-2.5 py-1 rounded text-[10px] font-medium text-cyan-400 border border-cyan-800/50 hover:bg-cyan-900/30 transition-colors"
-                    >
-                      Retry
-                    </button>
+                    <div className="flex gap-2">
+                      {canResume && (
+                        <button
+                          onClick={() => resumePlanAction(planDetail.id)}
+                          className="px-2.5 py-1 rounded text-[10px] font-medium text-green-400 border border-green-800/50 hover:bg-green-900/30 transition-colors"
+                        >
+                          Resume
+                        </button>
+                      )}
+                      <button
+                        onClick={() => retryPlan(planDetail.id)}
+                        className="px-2.5 py-1 rounded text-[10px] font-medium text-cyan-400 border border-cyan-800/50 hover:bg-cyan-900/30 transition-colors"
+                      >
+                        Retry All
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>

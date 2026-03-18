@@ -78,6 +78,9 @@ export interface Planner {
   /** Cancel a plan — kills all active agents, releases locks, marks cancelled */
   cancelPlan(planId: string): Promise<{ killed: string[] }>;
 
+  /** Resume a plan — reset failed tasks to pending and spawn ready ones */
+  resumePlan(planId: string): Promise<{ resumed: string[] }>;
+
   /** Shutdown */
   shutdown(): Promise<void>;
 }
@@ -1301,6 +1304,57 @@ export function createPlanner(
 
     listPlans(): ExecutionPlan[] {
       return Array.from(plans.values());
+    },
+
+    async resumePlan(planId: string): Promise<{ resumed: string[] }> {
+      const plan = plans.get(planId);
+      if (!plan) throw new Error(`Plan ${planId} not found`);
+
+      const resumed: string[] = [];
+
+      // Reset failed tasks to pending
+      for (const node of plan.taskGraph.nodes) {
+        if (node.status === "failed") {
+          // Remove special phase nodes (integration-test, verify-build) so they
+          // get re-created naturally when implementation completes
+          if (node.id === "integration-test" || node.id === "verify-build") {
+            plan.taskGraph.nodes = plan.taskGraph.nodes.filter((n) => n.id !== node.id);
+            await deps.taskStore.updateTask(plan.taskGraph.id, node.id, {
+              status: "pending",
+              assignedTo: null,
+              result: null,
+            });
+            continue;
+          }
+
+          node.status = "pending";
+          node.assignedTo = null;
+          node.result = null;
+          await deps.taskStore.updateTask(plan.taskGraph.id, node.id, {
+            status: "pending",
+            assignedTo: null,
+            result: null,
+          });
+          resumed.push(node.id);
+        }
+      }
+
+      if (resumed.length === 0) {
+        throw new Error(`Plan ${planId} has no failed tasks to resume`);
+      }
+
+      plan.phase = "executing";
+      plan.updatedAt = Date.now();
+
+      emit({
+        type: "plan_approved",
+        planId,
+        detail: `Resumed ${resumed.length} failed task(s): ${resumed.join(", ")}`,
+      });
+
+      await spawnReadyTasks(plan);
+
+      return { resumed };
     },
 
     async cancelPlan(planId: string): Promise<{ killed: string[] }> {

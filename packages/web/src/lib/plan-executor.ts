@@ -308,6 +308,72 @@ export async function restartAllWatchers(
 }
 
 /**
+ * Resume a plan — reset only failed tasks to pending, then spawn ready ones.
+ * Preserves completed tasks and their results.
+ */
+export async function resumePlan(
+  planId: string,
+  opts: { skipTesting: boolean; maxConcurrency: number; project?: string },
+): Promise<{ resumed: string[] }> {
+  const { sessionManager, config } = await getServices();
+
+  const projectId = opts.project ?? Object.keys(config.projects)[0];
+  if (!projectId) throw new Error("No projects configured");
+
+  // Stop any existing watcher for this plan
+  stopPlanWatcher(planId);
+
+  const messageBus = createMessageBus(REDIS_URL);
+  const fileLocks = createFileLockRegistry(REDIS_URL);
+  const taskStore = createTaskStore(REDIS_URL);
+
+  const planner = createPlanner(
+    {
+      messageBus,
+      fileLocks,
+      taskStore,
+      spawnSession: async (params) => {
+        const session = await sessionManager.spawn({
+          projectId: params.projectId,
+          prompt: params.prompt,
+          branch: params.branch,
+          runtimeConfig: { image: params.dockerImage },
+          environment: {
+            ...params.environment,
+            AO_SKILL: params.skill,
+            AO_MODEL: params.model,
+          },
+        });
+        return session.id;
+      },
+      killSession: async (sessionId) => {
+        await sessionManager.kill(sessionId);
+      },
+    },
+    {
+      requireApproval: false,
+      skipIntegrationTest: opts.skipTesting,
+      maxConcurrency: opts.maxConcurrency,
+    },
+  );
+
+  planner.onEvent((event: PlannerEvent) => {
+    console.log(`[plan-executor] ${event.type} plan=${event.planId} ${event.detail}`);
+  });
+
+  // Load the existing plan state
+  await planner.loadPlan(planId, projectId);
+
+  // Resume only the failed tasks
+  const result = await planner.resumePlan(planId);
+
+  // Start background watch loop
+  startWatchLoop(planId, planner, messageBus, taskStore);
+
+  return result;
+}
+
+/**
  * Retry a plan that was cancelled or failed.
  * Expects all tasks to already be reset to "pending".
  * Creates a new planner instance, loads the plan, and spawns agents.
