@@ -68,8 +68,9 @@ export interface MessageBus {
   /** Publish a message to a target's inbox */
   publish(message: Omit<BusMessage, "id" | "timestamp">): Promise<string>;
 
-  /** Subscribe to messages for a given recipient */
-  subscribe(recipient: string, handler: MessageHandler): Promise<void>;
+  /** Subscribe to messages for a given recipient.
+   *  startId defaults to "$" (new messages only). Pass "0" to replay from beginning. */
+  subscribe(recipient: string, handler: MessageHandler, startId?: string): Promise<void>;
 
   /** Unsubscribe from messages */
   unsubscribe(recipient: string): Promise<void>;

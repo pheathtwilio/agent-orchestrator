@@ -141,7 +141,10 @@ function startWatchLoop(
 
   let stopped = false;
 
-  // Subscribe to orchestrator inbox for messages from agents
+  // Subscribe to orchestrator inbox for messages from agents.
+  // Replay from "0" to catch any messages that arrived while no watcher was running
+  // (e.g. TASK_COMPLETE sent after a server restart). The planner's handleMessage
+  // is idempotent for already-processed tasks (they won't be in activeSessions).
   messageBus.subscribe("orchestrator", async (message) => {
     if (stopped) return;
 
@@ -153,7 +156,7 @@ function startWatchLoop(
     } catch (err) {
       console.error(`[plan-executor] Error handling message for ${planId}:`, err);
     }
-  });
+  }, "0");
 
   // Periodic monitor check (stuck agents, deadlocks, orphaned sessions)
   const monitorInterval = setInterval(async () => {

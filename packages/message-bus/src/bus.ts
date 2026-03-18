@@ -85,15 +85,16 @@ export function createMessageBus(redisUrl?: string): MessageBus {
       return fullMessage.id;
     },
 
-    async subscribe(recipient: string, handler: MessageHandler): Promise<void> {
+    async subscribe(recipient: string, handler: MessageHandler, startId?: string): Promise<void> {
       await ensureConnected();
 
       const key = streamKey(recipient);
       const entry = { polling: true };
       subscriptions.set(recipient, entry);
 
-      // Start polling loop — reads new messages from the stream
-      let lastId = "$"; // Only new messages from this point
+      // Start polling loop — reads new messages from the stream.
+      // "$" = only new messages; "0" = replay from beginning (for catching up after restart)
+      let lastId = startId ?? "$";
 
       (async () => {
         while (entry.polling) {
