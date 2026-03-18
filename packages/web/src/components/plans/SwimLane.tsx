@@ -22,6 +22,7 @@ const SKILL_BADGES: Record<string, { bg: string; text: string }> = {
   security: { bg: "bg-orange-500/20", text: "text-orange-400" },
   devops: { bg: "bg-amber-500/20", text: "text-amber-400" },
   database: { bg: "bg-pink-500/20", text: "text-pink-400" },
+  doctor: { bg: "bg-red-500/20", text: "text-red-400" },
 };
 
 interface SwimLaneProps {

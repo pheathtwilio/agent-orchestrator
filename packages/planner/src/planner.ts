@@ -542,6 +542,129 @@ export function createPlanner(
   }
 
   /**
+   * Spawn a doctor agent to diagnose and fix a failed/stuck task.
+   * The doctor investigates the failure, applies fixes to the project,
+   * and reports TASK_COMPLETE when the issue is resolved.
+   */
+  async function spawnDoctorAgent(
+    plan: ExecutionPlan,
+    failedTaskId: string,
+    reason: string,
+    context: { error?: string; lastActivity?: string; sessionId?: string },
+  ): Promise<void> {
+    const failedNode = plan.taskGraph.nodes.find((n) => n.id === failedTaskId);
+    if (!failedNode) return;
+
+    const doctorNodeId = `doctor-${failedTaskId}`;
+
+    // Don't spawn a doctor for another doctor
+    if (failedTaskId.startsWith("doctor-")) return;
+
+    const branch = failedNode.branch ?? `feat/${plan.id}/${failedTaskId.replace(/\./g, "-")}`;
+
+    const doctorPrompt = [
+      `# Doctor Agent — Diagnose and Fix`,
+      "",
+      `## Context`,
+      `A previous agent working on task "${failedNode.title}" has ${reason}.`,
+      `Your job is to investigate why and fix the underlying issue so the task can succeed on retry.`,
+      "",
+      `## Failed Task Details`,
+      `- Task: ${failedNode.title}`,
+      `- Description: ${failedNode.description}`,
+      `- Branch: ${branch}`,
+      `- Skill: ${failedNode.skill}`,
+      context.error ? `- Error: ${context.error}` : "",
+      context.lastActivity ? `- Last Activity: ${context.lastActivity}` : "",
+      "",
+      `## Common Issues to Check`,
+      `1. **Hanging tests**: Tests that start HTTP servers or SSE connections and don't close them.`,
+      `   - Look for \`afterAll\` / \`afterEach\` hooks that don't call \`server.close()\``,
+      `   - Check for missing \`--forceExit\` in Jest config`,
+      `   - Look for open database connections, timers, or event listeners`,
+      `2. **Build failures**: Missing dependencies, type errors, import issues`,
+      `3. **Environment issues**: Missing env vars, wrong Node version, missing native deps`,
+      `4. **Git conflicts**: Merge conflicts from parallel agents working on overlapping files`,
+      "",
+      `## Instructions`,
+      `1. Check out branch \`${branch}\` and examine the current state`,
+      `2. Look at the test configuration and any test files for issues`,
+      `3. If tests hang, fix the root cause (add proper cleanup, forceExit, etc.)`,
+      `4. Run the tests to verify your fix works`,
+      `5. Commit your fixes and push`,
+      `6. Report TASK_COMPLETE with a summary of what you found and fixed`,
+      `7. If the issue is unfixable, report TASK_FAILED explaining why`,
+      "",
+      `## Feature Context`,
+      `This is part of: ${plan.featureDescription}`,
+    ].filter(Boolean).join("\n");
+
+    const doctorNode: BusTaskNode = {
+      id: doctorNodeId,
+      title: `Doctor: ${failedNode.title}`,
+      description: `Diagnosing and fixing: ${reason}`,
+      acceptanceCriteria: [],
+      fileBoundary: failedNode.fileBoundary,
+      status: "in_progress",
+      assignedTo: null,
+      model: modelTierToId(cfg.modelPolicy.testing),
+      skill: "doctor",
+      dependsOn: [],
+      branch,
+      result: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+
+    try {
+      const sessionId = await deps.spawnSession({
+        projectId: plan.projectId,
+        taskId: doctorNodeId,
+        prompt: doctorPrompt,
+        branch,
+        model: modelTierToId(cfg.modelPolicy.testing),
+        skill: "doctor",
+        dockerImage: cfg.imageMap.doctor,
+        environment: {
+          AO_PLAN_ID: plan.id,
+          AO_TASK_ID: doctorNodeId,
+          AO_MODEL: modelTierToId(cfg.modelPolicy.testing),
+          AO_SKILL: "doctor",
+        },
+      });
+
+      doctorNode.assignedTo = sessionId;
+      await deps.taskStore.addNode(plan.taskGraph.id, doctorNode);
+      plan.taskGraph.nodes.push(doctorNode);
+
+      plan.activeSessions.set(doctorNodeId, sessionId);
+      sessionActivity.set(sessionId, Date.now());
+
+      emit({
+        type: "doctor_started",
+        planId: plan.id,
+        taskId: doctorNodeId,
+        sessionId,
+        detail: `Spawned doctor agent to fix: ${reason}`,
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      emit({
+        type: "doctor_failed",
+        planId: plan.id,
+        taskId: doctorNodeId,
+        detail: `Failed to spawn doctor agent: ${msg}`,
+      });
+      // Mark the original task as failed if doctor can't spawn
+      failedNode.status = "failed";
+      await deps.taskStore.updateTask(plan.taskGraph.id, failedTaskId, {
+        status: "failed",
+        assignedTo: null,
+      });
+    }
+  }
+
+  /**
    * Clean up all plan resources: kill agent containers (which also removes
    * worktrees via sessionManager.kill) and release file locks.
    *
@@ -758,9 +881,56 @@ export function createPlanner(
           // Release file locks
           await deps.fileLocks.releaseAll(taskId);
 
+          const isDoctor = taskId.startsWith("doctor-");
           const isPerTaskTest = taskId.endsWith("-test") && taskId !== "integration-test";
           const isIntegrationTest = taskId === "integration-test";
           const parentTaskId = isPerTaskTest ? taskId.replace(/-test$/, "") : null;
+
+          if (isDoctor) {
+            // ── Doctor agent fixed the issue → retry the original task ──
+            const originalTaskId = taskId.replace(/^doctor-/, "");
+            plan.activeSessions.delete(taskId);
+            plan.updatedAt = Date.now();
+
+            const doctorNode = plan.taskGraph.nodes.find((n) => n.id === taskId);
+            if (doctorNode) {
+              doctorNode.status = "complete";
+              doctorNode.result = {
+                taskId,
+                sessionId: message.from,
+                status: "complete",
+                branch: (message.payload.branch as string) ?? "",
+                commits: (message.payload.commits as string[]) ?? [],
+                summary: (message.payload.summary as string) ?? "Issue diagnosed and fixed",
+              };
+              await deps.taskStore.updateTask(plan.taskGraph.id, taskId, {
+                status: "complete",
+                result: doctorNode.result,
+              });
+            }
+
+            emit({
+              type: "doctor_complete",
+              planId,
+              taskId,
+              sessionId: message.from,
+              detail: (message.payload.summary as string) ?? "Doctor fixed the issue",
+            });
+
+            // Reset the original task to pending so it gets retried
+            const originalNode = plan.taskGraph.nodes.find((n) => n.id === originalTaskId);
+            if (originalNode) {
+              originalNode.status = "pending";
+              originalNode.assignedTo = null;
+              await deps.taskStore.updateTask(plan.taskGraph.id, originalTaskId, {
+                status: "pending",
+                assignedTo: null,
+              });
+            }
+
+            await spawnReadyTasks(plan);
+            break;
+          }
 
           if (taskId === "verify-build") {
             // ── Verify build passed → plan complete ──
@@ -974,6 +1144,42 @@ export function createPlanner(
           await deps.fileLocks.releaseAll(taskId);
 
           const error = (message.payload.error as string) ?? "Unknown error";
+
+          // Doctor agent failed → mark original task as permanently failed
+          if (taskId.startsWith("doctor-")) {
+            plan.activeSessions.delete(taskId);
+            plan.updatedAt = Date.now();
+
+            const doctorNode = plan.taskGraph.nodes.find((n) => n.id === taskId);
+            if (doctorNode) {
+              doctorNode.status = "failed";
+              doctorNode.result = {
+                taskId,
+                sessionId: message.from,
+                status: "failed",
+                branch: "",
+                commits: [],
+                summary: `Doctor could not fix the issue: ${error}`,
+                error,
+              };
+              await deps.taskStore.updateTask(plan.taskGraph.id, taskId, {
+                status: "failed",
+                result: doctorNode.result,
+              });
+            }
+
+            emit({
+              type: "doctor_failed",
+              planId,
+              taskId,
+              sessionId: message.from,
+              detail: `Doctor failed: ${error}`,
+            });
+
+            // Don't retry further — the original task stays failed
+            break;
+          }
+
           const isFailedPerTaskTest = taskId.endsWith("-test") && taskId !== "integration-test";
           const failedParentId = isFailedPerTaskTest ? taskId.replace(/-test$/, "") : null;
 
@@ -1059,9 +1265,10 @@ export function createPlanner(
             break;
           }
 
-          // Regular task failure → reassign
+          // Regular task failure → spawn doctor agent to investigate and fix
           await deps.taskStore.updateTask(plan.taskGraph.id, taskId, {
             status: "failed",
+            assignedTo: null,
           });
 
           const failedNode = plan.taskGraph.nodes.find((n) => n.id === taskId);
@@ -1075,14 +1282,12 @@ export function createPlanner(
             detail: `Task failed: ${error}`,
           });
 
-          // Reassign: reset to pending so it gets picked up again
-          await deps.taskStore.updateTask(plan.taskGraph.id, taskId, {
-            status: "pending",
-            assignedTo: null,
+          // Spawn a doctor agent to diagnose and fix the issue
+          await spawnDoctorAgent(plan, taskId, `failed with error: ${error}`, {
+            error,
+            sessionId: message.from,
           });
-          if (failedNode) failedNode.status = "pending";
 
-          await spawnReadyTasks(plan);
           break;
         }
 
@@ -1256,7 +1461,7 @@ export function createPlanner(
             sessionActivity.delete(sessionId);
             await deps.fileLocks.releaseAll(taskId);
 
-            // Reset task to pending for retry (unless it's a special task)
+            // Special tasks (integration-test, verify-build) → fail the plan
             if (taskId === "integration-test" || taskId === "verify-build") {
               const node = plan.taskGraph.nodes.find((n) => n.id === taskId);
               if (node) {
@@ -1273,19 +1478,33 @@ export function createPlanner(
               });
               plan.phase = "failed";
               await cleanupPlanResources(plan);
+            } else if (taskId.startsWith("doctor-")) {
+              // Doctor itself got stuck → mark original task as failed
+              const node = plan.taskGraph.nodes.find((n) => n.id === taskId);
+              if (node) {
+                node.status = "failed";
+                await deps.taskStore.updateTask(plan.taskGraph.id, taskId, {
+                  status: "failed",
+                  assignedTo: null,
+                });
+              }
+              emit({
+                type: "doctor_failed",
+                planId,
+                taskId,
+                detail: `Doctor agent timed out after ${Math.round(STUCK_THRESHOLD_MS / 60000)}m`,
+              });
             } else {
+              // Regular task stuck → spawn doctor to investigate
               await deps.taskStore.updateTask(plan.taskGraph.id, taskId, {
-                status: "pending",
+                status: "failed",
                 assignedTo: null,
               });
               const node = plan.taskGraph.nodes.find((n) => n.id === taskId);
-              if (node) node.status = "pending";
+              if (node) node.status = "failed";
 
-              emit({
-                type: "task_reassigned",
-                planId,
-                taskId,
-                detail: "Reassigning stuck task to new agent",
+              await spawnDoctorAgent(plan, taskId, `stuck for ${Math.round((now - lastActive) / 60000)} minutes`, {
+                lastActivity: `Last progress update: ${new Date(lastActive).toISOString()}`,
               });
             }
           }

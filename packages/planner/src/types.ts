@@ -12,7 +12,8 @@ export type AgentSkill =
   | "testing"
   | "security"
   | "devops"
-  | "database";
+  | "database"
+  | "doctor";
 
 /** Model tier — maps to cost/capability tradeoff */
 export type ModelTier = "opus" | "sonnet" | "haiku";
@@ -89,6 +90,7 @@ export const DEFAULT_PLANNER_CONFIG: PlannerConfig = {
     security: "ao-agent-security:latest",
     devops: "ao-agent:latest",
     database: "ao-agent:latest",
+    doctor: "ao-agent-frontend:latest",
   },
 };
 
@@ -140,6 +142,9 @@ export type PlannerEventType =
   | "plan_failed"
   | "agent_stuck"
   | "agent_unstuck"
+  | "doctor_started"
+  | "doctor_complete"
+  | "doctor_failed"
   | "deadlock_detected"
   | "plan_cancelled";
 
