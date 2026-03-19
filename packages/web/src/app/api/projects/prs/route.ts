@@ -20,8 +20,14 @@ interface PRListItem {
 }
 
 async function gh(args: string[], cwd: string): Promise<string | null> {
+  // Ensure homebrew paths are available (Next.js server may have a minimal PATH)
+  const env = { ...process.env };
+  const path = env.PATH ?? "";
+  if (!path.includes("/opt/homebrew/bin")) {
+    env.PATH = `/opt/homebrew/bin:/usr/local/bin:${path}`;
+  }
   try {
-    const { stdout } = await execFileAsync("gh", args, { cwd, timeout: 15_000 });
+    const { stdout } = await execFileAsync("gh", args, { cwd, timeout: 15_000, env });
     return stdout.trimEnd();
   } catch {
     return null;

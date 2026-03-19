@@ -36,6 +36,10 @@ RUN ARCH=$(dpkg --print-architecture) \
     && /tmp/aws/install \
     && rm -rf /tmp/aws /tmp/awscliv2.zip
 
+# Package managers (detect lockfile at runtime to use the right one)
+# corepack ships with Node.js and provides pnpm + yarn shims
+RUN corepack enable && corepack prepare pnpm@latest --activate
+
 # Claude Code CLI (runs with --dangerously-skip-permissions)
 RUN npm install -g @anthropic-ai/claude-code
 

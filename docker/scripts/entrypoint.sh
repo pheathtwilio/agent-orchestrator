@@ -76,6 +76,24 @@ fi
 
 echo ""
 
+# ── Auto-install dependencies ──
+# Detect the project's package manager from lockfiles and install dependencies
+if [ -f "/workspace/pnpm-lock.yaml" ]; then
+    echo "Dependencies: detected pnpm (pnpm-lock.yaml)"
+    cd /workspace && pnpm install --frozen-lockfile 2>/dev/null || pnpm install 2>/dev/null || echo "  Warning: pnpm install failed"
+elif [ -f "/workspace/yarn.lock" ]; then
+    echo "Dependencies: detected yarn (yarn.lock)"
+    cd /workspace && yarn install --frozen-lockfile 2>/dev/null || yarn install 2>/dev/null || echo "  Warning: yarn install failed"
+elif [ -f "/workspace/package-lock.json" ]; then
+    echo "Dependencies: detected npm (package-lock.json)"
+    cd /workspace && npm ci 2>/dev/null || npm install 2>/dev/null || echo "  Warning: npm install failed"
+elif [ -f "/workspace/package.json" ]; then
+    echo "Dependencies: detected package.json (no lockfile)"
+    cd /workspace && npm install 2>/dev/null || echo "  Warning: npm install failed"
+fi
+
+echo ""
+
 # Execute command or drop to shell
 if [ $# -eq 0 ]; then
     exec bash

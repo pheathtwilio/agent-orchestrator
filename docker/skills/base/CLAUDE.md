@@ -37,6 +37,6 @@ If you've been trying the same approach for more than 3 attempts:
 ## What NOT to Do
 
 - Don't modify CI/CD pipelines unless that's your task
-- Don't install new dependencies without justification
+- Don't add new package dependencies to package.json without justification (project deps are auto-installed at container startup)
 - Don't refactor code outside your task scope
 - Don't create placeholder or TODO comments — implement fully or don't touch it
