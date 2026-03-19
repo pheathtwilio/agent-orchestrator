@@ -291,6 +291,24 @@ export function PlansDashboard() {
         <div className="flex items-center gap-3">
           {selectedPlanId && <ConnectionDot connected={connected} />}
           <button
+            onClick={async () => {
+              try {
+                const res = await fetch("/api/plans/cleanup", { method: "POST" });
+                const data = await res.json();
+                if (data.planId) {
+                  setSelectedPlanId(data.planId);
+                  setActiveTab("lanes");
+                  fetchPlans();
+                }
+              } catch {
+                // Will show in plan list when it appears
+              }
+            }}
+            className="px-3 py-1.5 rounded-md text-xs font-medium text-amber-400 border border-amber-800/50 hover:bg-amber-900/30 transition-colors"
+          >
+            Cleanup
+          </button>
+          <button
             onClick={() => setShowCreateForm(true)}
             className="px-3 py-1.5 rounded-md text-xs font-medium bg-cyan-600 text-white hover:bg-cyan-500 transition-colors"
           >
