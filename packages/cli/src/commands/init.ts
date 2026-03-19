@@ -131,7 +131,7 @@ async function detectEnvironment(workingDir: string): Promise<EnvironmentInfo> {
   const hasDocker = (await execSilent("docker", ["--version"])) !== null;
   let hasDockerRunning = false;
   if (hasDocker) {
-    hasDockerRunning = (await execSilent("docker", ["info"])) !== null;
+    hasDockerRunning = (await execSilent("docker", ["info"], { timeout: 5000 })) !== null;
   }
 
   // Check for API keys in environment

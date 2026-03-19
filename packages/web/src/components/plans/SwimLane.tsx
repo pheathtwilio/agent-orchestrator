@@ -99,7 +99,7 @@ export const SwimLane = memo(function SwimLane({
 
         {/* Task title + description + activity */}
         <div className="flex-1 min-w-0">
-          <span className="text-sm text-zinc-200 block truncate">{task.title}</span>
+          <span className="text-sm text-zinc-200 block">{task.title}</span>
           {task.description && (
             <span className="text-[11px] text-zinc-500 block truncate">{task.description}</span>
           )}

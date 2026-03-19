@@ -116,7 +116,6 @@ export function PlansDashboard() {
   const [showArchived, setShowArchived] = useState(false);
   const [branches, setBranches] = useState<BranchInfo[]>([]);
   const [defaultBranch, setDefaultBranch] = useState<string>("main");
-  const [restartingWatchers, setRestartingWatchers] = useState(false);
 
   // SSE connection for the selected plan
   const { snapshot, messages, outputLines, connected } = usePlanEvents(
@@ -498,28 +497,6 @@ export function PlansDashboard() {
             </div>
           )}
 
-          {/* Dev tools */}
-          <div className="pt-2 border-t border-zinc-800/50">
-            <button
-              onClick={async () => {
-                setRestartingWatchers(true);
-                try {
-                  const res = await fetch("/api/plans/restart-watchers", { method: "POST" });
-                  const data = await res.json();
-                  console.log("[restart-watchers]", data);
-                } finally {
-                  setRestartingWatchers(false);
-                }
-              }}
-              disabled={restartingWatchers}
-              className="w-full px-2.5 py-1.5 rounded text-[10px] font-medium text-amber-400 border border-amber-800/50 hover:bg-amber-900/30 transition-colors disabled:opacity-50"
-            >
-              {restartingWatchers ? "Restarting..." : "Restart Watchers"}
-            </button>
-            <p className="text-[9px] text-zinc-600 mt-1">
-              Reload plan watchers with latest code
-            </p>
-          </div>
         </div>
 
         {/* ── Main content area ── */}
@@ -677,34 +654,6 @@ export function PlansDashboard() {
                       ))}
                     </TaskGroup>
                   )}
-                </div>
-              )}
-
-              {/* Live output console — shown when streaming is active */}
-              {followOutput && outputLines.length > 0 && activeTab === "lanes" && (
-                <div className="bg-zinc-950 rounded-lg border border-zinc-800 p-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-cyan-500">
-                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse mr-1.5 align-middle" />
-                      Live Output
-                    </span>
-                    <span className="text-[10px] text-zinc-600 font-mono">
-                      {outputLines.length} lines
-                    </span>
-                  </div>
-                  <div className="font-mono text-[11px] text-zinc-500 leading-relaxed max-h-48 overflow-y-auto">
-                    {outputLines.slice(-30).map((line, i) => (
-                      <div key={`${line.timestamp}-${i}`} className="truncate">
-                        <span className="text-zinc-700 select-none">
-                          {new Date(line.timestamp).toLocaleTimeString()}{" "}
-                        </span>
-                        <span className="text-cyan-600/60 select-none">
-                          {line.sessionId.slice(-6)}{" "}
-                        </span>
-                        {line.line}
-                      </div>
-                    ))}
-                  </div>
                 </div>
               )}
 

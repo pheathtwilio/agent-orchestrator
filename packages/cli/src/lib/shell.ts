@@ -11,19 +11,20 @@ export interface ExecResult {
 export async function exec(
   cmd: string,
   args: string[],
-  options?: { cwd?: string; env?: Record<string, string> },
+  options?: { cwd?: string; env?: Record<string, string>; timeout?: number },
 ): Promise<ExecResult> {
   const { stdout, stderr } = await execFileAsync(cmd, args, {
     cwd: options?.cwd,
     env: options?.env ? { ...process.env, ...options.env } : undefined,
     maxBuffer: 10 * 1024 * 1024,
+    timeout: options?.timeout,
   });
   return { stdout: stdout.trimEnd(), stderr: stderr.trimEnd() };
 }
 
-export async function execSilent(cmd: string, args: string[]): Promise<string | null> {
+export async function execSilent(cmd: string, args: string[], options?: { timeout?: number }): Promise<string | null> {
   try {
-    const { stdout } = await exec(cmd, args);
+    const { stdout } = await exec(cmd, args, { timeout: options?.timeout });
     return stdout;
   } catch {
     return null;
