@@ -1,4 +1,4 @@
-import { createAnthropicClient } from "@composio/ao-core";
+import Anthropic from "@anthropic-ai/sdk";
 import { getServices } from "@/lib/services";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -167,8 +167,8 @@ export async function POST(request: Request): Promise<Response> {
     start(controller) {
       void (async () => {
         try {
-          const client = createAnthropicClient();
-          const response = await client.messages.create({
+          const client = new Anthropic();
+          const stream = client.messages.stream({
             model,
             max_tokens: 4096,
             system: systemPrompt,
@@ -176,19 +176,15 @@ export async function POST(request: Request): Promise<Response> {
               role: m.role as "user" | "assistant",
               content: m.content,
             })),
-            stream: true,
           });
 
-          for await (const event of response) {
-            if (streamClosed) break;
-            if (
-              event.type === "content_block_delta" &&
-              event.delta.type === "text_delta"
-            ) {
-              const chunk = `data: ${JSON.stringify({ content: event.delta.text })}\n\n`;
-              controller.enqueue(encoder.encode(chunk));
-            }
-          }
+          stream.on("text", (text) => {
+            if (streamClosed) return;
+            const chunk = `data: ${JSON.stringify({ content: text })}\n\n`;
+            controller.enqueue(encoder.encode(chunk));
+          });
+
+          await stream.finalMessage();
 
           if (!streamClosed) {
             controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true })}\n\n`));

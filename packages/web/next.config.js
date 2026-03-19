@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   transpilePackages: ["@composio/ao-core"],
-  serverExternalPackages: ["@composio/core"],
+  serverExternalPackages: ["@composio/core", "@anthropic-ai/sdk"],
   webpack: (config, { isServer }) => {
     if (isServer) {
       // @composio/core is an optional peer dep of tracker-linear.

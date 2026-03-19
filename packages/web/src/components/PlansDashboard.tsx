@@ -7,7 +7,6 @@ import { SwimLane } from "./plans/SwimLane";
 import { TaskQueueLog } from "./plans/TaskQueueLog";
 import { PlanSummaryPanel } from "./plans/PlanSummaryPanel";
 import { UsageBanner } from "./plans/UsageBanner";
-import { CreatePlanForm } from "./plans/CreatePlanForm";
 import { BrainstormModal } from "./plans/BrainstormModal";
 
 // ── Types ──
@@ -128,12 +127,6 @@ export function PlansDashboard() {
   const [branches, setBranches] = useState<BranchInfo[]>([]);
   const [defaultBranch, setDefaultBranch] = useState<string>("main");
   const [pullRequests, setPullRequests] = useState<PRListItem[]>([]);
-  const [brainstormConfig, setBrainstormConfig] = useState<{
-    project: string;
-    description: string;
-    skipTesting: boolean;
-    maxConcurrency: number;
-  } | null>(null);
 
   // SSE connection for the selected plan
   const { snapshot, messages, outputLines, connected } = usePlanEvents(
@@ -347,44 +340,17 @@ export function PlansDashboard() {
         </div>
       </div>
 
-      {/* Create plan modal */}
-      {showCreateForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-          <div className="bg-zinc-900 border border-zinc-700 rounded-xl p-6 w-full max-w-lg shadow-2xl">
-            <h2 className="text-lg font-semibold text-zinc-200 mb-4">Create Plan</h2>
-            <CreatePlanForm
-              projects={projects}
-              onCreated={(planId) => {
-                setShowCreateForm(false);
-                setSelectedPlanId(planId);
-                fetchPlans();
-              }}
-              onCancel={() => setShowCreateForm(false)}
-              onBrainstorm={(config) => {
-                setShowCreateForm(false);
-                setBrainstormConfig(config);
-              }}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Brainstorm modal */}
-      {brainstormConfig && (
-        <BrainstormModal
-          open={!!brainstormConfig}
-          onClose={() => setBrainstormConfig(null)}
-          project={brainstormConfig.project}
-          skipTesting={brainstormConfig.skipTesting}
-          maxConcurrency={brainstormConfig.maxConcurrency}
-          initialDescription={brainstormConfig.description}
-          onPlanCreated={(planId) => {
-            setBrainstormConfig(null);
-            setSelectedPlanId(planId);
-            fetchPlans();
-          }}
-        />
-      )}
+      {/* Brainstorm / plan creation modal */}
+      <BrainstormModal
+        open={showCreateForm}
+        onClose={() => setShowCreateForm(false)}
+        projects={projects}
+        onPlanCreated={(planId) => {
+          setShowCreateForm(false);
+          setSelectedPlanId(planId);
+          fetchPlans();
+        }}
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
         {/* ── Left sidebar: Plan list + locks ── */}

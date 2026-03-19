@@ -19,7 +19,10 @@
     "screenshot:install": "npx playwright install chromium"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.79.0",
     "@composio/ao-core": "workspace:*",
+    "@composio/ao-message-bus": "workspace:*",
+    "@composio/ao-planner": "workspace:*",
     "@composio/ao-plugin-agent-claude-code": "workspace:*",
     "@composio/ao-plugin-agent-opencode": "workspace:*",
     "@composio/ao-plugin-runtime-docker": "workspace:*",
@@ -28,8 +31,6 @@
     "@composio/ao-plugin-tracker-github": "workspace:*",
     "@composio/ao-plugin-tracker-linear": "workspace:*",
     "@composio/ao-plugin-workspace-worktree": "workspace:*",
-    "@composio/ao-message-bus": "workspace:*",
-    "@composio/ao-planner": "workspace:*",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-web-links": "^0.12.0",
     "next": "^15.1.0",

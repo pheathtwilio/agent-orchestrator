@@ -3,13 +3,16 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { cn } from "@/lib/cn";
 
+interface ProjectInfo {
+  id: string;
+  name: string;
+  repo: string;
+}
+
 interface BrainstormModalProps {
   open: boolean;
   onClose: () => void;
-  project: string;
-  skipTesting: boolean;
-  maxConcurrency: number;
-  initialDescription?: string;
+  projects: ProjectInfo[];
   onPlanCreated: (planId: string) => void;
 }
 
@@ -27,20 +30,20 @@ interface AgentOption {
 export function BrainstormModal({
   open,
   onClose,
-  project,
-  skipTesting,
-  maxConcurrency,
-  initialDescription,
+  projects,
   onPlanCreated,
 }: BrainstormModalProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [input, setInput] = useState(initialDescription ?? "");
+  const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [pendingSpec, setPendingSpec] = useState<string | null>(null);
   const [selectedAgent, setSelectedAgent] = useState("default");
   const [agents, setAgents] = useState<AgentOption[]>([{ id: "default", name: "Default Brainstorm Agent" }]);
   const [creatingPlan, setCreatingPlan] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [project, setProject] = useState(projects[0]?.id ?? "");
+  const [skipTesting, setSkipTesting] = useState(false);
+  const [maxConcurrency, setMaxConcurrency] = useState(5);
   const abortRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -66,10 +69,11 @@ export function BrainstormModal({
       setMessages([]);
       setPendingSpec(null);
       setError(null);
-      setInput(initialDescription ?? "");
+      setInput("");
       setCreatingPlan(false);
+      setProject(projects[0]?.id ?? "");
     }
-  }, [open, initialDescription]);
+  }, [open, projects]);
 
   // Cleanup abort on unmount
   useEffect(() => {
@@ -146,7 +150,6 @@ export function BrainstormModal({
               setMessages([...updatedMessages, { role: "assistant", content: assistantContent }]);
             }
             if (data.done) {
-              // Spec detection after stream completes
               const specMatch = assistantContent.match(/<spec>([\s\S]*?)<\/spec>/);
               if (specMatch) {
                 setPendingSpec(specMatch[1].trim());
@@ -206,7 +209,7 @@ export function BrainstormModal({
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-black/80 backdrop-blur-sm">
       {/* Header */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-zinc-800">
+      <div className="flex items-center justify-between px-6 py-3 border-b border-zinc-800">
         <div className="flex items-center gap-4">
           <h2 className="text-lg font-semibold text-zinc-200">Brainstorm</h2>
           <select
@@ -219,14 +222,51 @@ export function BrainstormModal({
               <option key={a.id} value={a.id}>{a.name}</option>
             ))}
           </select>
+          {projects.length > 1 && (
+            <select
+              value={project}
+              onChange={(e) => setProject(e.target.value)}
+              className="bg-zinc-900 border border-zinc-700 rounded-md px-2 py-1 text-xs text-zinc-300 focus:border-cyan-600 focus:outline-none"
+              disabled={streaming}
+            >
+              {projects.map((p) => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          )}
         </div>
-        <button
-          onClick={onClose}
-          disabled={creatingPlan}
-          className="text-zinc-500 hover:text-zinc-300 transition-colors text-xl leading-none"
-        >
-          &times;
-        </button>
+        <div className="flex items-center gap-4">
+          {/* Plan settings */}
+          <div className="flex items-center gap-3 text-xs text-zinc-500">
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={skipTesting}
+                onChange={(e) => setSkipTesting(e.target.checked)}
+                className="rounded border-zinc-700 bg-zinc-800 text-cyan-500 focus:ring-cyan-500/30 w-3 h-3"
+              />
+              <span className="text-zinc-400">Skip tests</span>
+            </label>
+            <label className="flex items-center gap-1.5">
+              <span className="text-zinc-400">Agents:</span>
+              <input
+                type="number"
+                min={1}
+                max={10}
+                value={maxConcurrency}
+                onChange={(e) => setMaxConcurrency(parseInt(e.target.value, 10) || 5)}
+                className="w-12 bg-zinc-900 border border-zinc-700 rounded px-1.5 py-0.5 text-xs text-zinc-200 focus:border-cyan-600 focus:outline-none"
+              />
+            </label>
+          </div>
+          <button
+            onClick={onClose}
+            disabled={creatingPlan}
+            className="text-zinc-500 hover:text-zinc-300 transition-colors text-xl leading-none"
+          >
+            &times;
+          </button>
+        </div>
       </div>
 
       {/* Messages */}
