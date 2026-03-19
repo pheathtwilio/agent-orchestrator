@@ -619,6 +619,12 @@ importers:
       '@anthropic-ai/sdk':
         specifier: ^0.79.0
         version: 0.79.0(zod@3.25.76)
+      '@aws-sdk/client-bedrock-runtime':
+        specifier: ^3.1010.0
+        version: 3.1010.0
+      '@aws-sdk/credential-providers':
+        specifier: ^3.1010.0
+        version: 3.1010.0
       '@composio/ao-core':
         specifier: workspace:*
         version: link:../core

@@ -1,4 +1,9 @@
 import Anthropic from "@anthropic-ai/sdk";
+import {
+  BedrockRuntimeClient,
+  InvokeModelWithResponseStreamCommand,
+} from "@aws-sdk/client-bedrock-runtime";
+import { fromSSO } from "@aws-sdk/credential-providers";
 import { getServices } from "@/lib/services";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -116,6 +121,52 @@ function trimMessages(
   return [messages[0], ...messages.slice(-18)];
 }
 
+async function streamViaBedrock(
+  model: string,
+  systemPrompt: string,
+  messages: Array<{ role: string; content: string }>,
+  controller: ReadableStreamDefaultController,
+  encoder: TextEncoder,
+  isClosed: () => boolean,
+): Promise<void> {
+  const region = process.env.AWS_REGION ?? "us-west-2";
+  const profile = process.env.AWS_PROFILE ?? undefined;
+
+  const bedrock = new BedrockRuntimeClient({
+    region,
+    credentials: fromSSO({ profile }),
+  });
+
+  const body = {
+    anthropic_version: "bedrock-2023-05-31",
+    max_tokens: 4096,
+    system: systemPrompt,
+    messages,
+  };
+
+  const command = new InvokeModelWithResponseStreamCommand({
+    modelId: model,
+    contentType: "application/json",
+    accept: "application/json",
+    body: JSON.stringify(body),
+  });
+
+  const response = await bedrock.send(command);
+
+  if (response.body) {
+    for await (const event of response.body) {
+      if (isClosed()) break;
+      if (event.chunk?.bytes) {
+        const parsed = JSON.parse(new TextDecoder().decode(event.chunk.bytes));
+        if (parsed.type === "content_block_delta" && parsed.delta?.text) {
+          const chunk = `data: ${JSON.stringify({ content: parsed.delta.text })}\n\n`;
+          controller.enqueue(encoder.encode(chunk));
+        }
+      }
+    }
+  }
+}
+
 export async function POST(request: Request): Promise<Response> {
   const ip = request.headers.get("x-forwarded-for") ?? "unknown";
   if (!checkRateLimit(ip)) {
@@ -167,24 +218,32 @@ export async function POST(request: Request): Promise<Response> {
     start(controller) {
       void (async () => {
         try {
-          const client = new Anthropic();
-          const stream = client.messages.stream({
-            model,
-            max_tokens: 4096,
-            system: systemPrompt,
-            messages: trimmed.map((m) => ({
-              role: m.role as "user" | "assistant",
-              content: m.content,
-            })),
-          });
+          const apiMessages = trimmed.map((m) => ({
+            role: m.role as "user" | "assistant",
+            content: m.content,
+          }));
 
-          stream.on("text", (text) => {
-            if (streamClosed) return;
-            const chunk = `data: ${JSON.stringify({ content: text })}\n\n`;
-            controller.enqueue(encoder.encode(chunk));
-          });
+          if (process.env.CLAUDE_CODE_USE_BEDROCK === "1") {
+            // Bedrock streaming via AWS SDK
+            await streamViaBedrock(model, systemPrompt, apiMessages, controller, encoder, () => streamClosed);
+          } else {
+            // Direct Anthropic API streaming
+            const client = new Anthropic();
+            const anthropicStream = client.messages.stream({
+              model,
+              max_tokens: 4096,
+              system: systemPrompt,
+              messages: apiMessages,
+            });
 
-          await stream.finalMessage();
+            anthropicStream.on("text", (text) => {
+              if (streamClosed) return;
+              const chunk = `data: ${JSON.stringify({ content: text })}\n\n`;
+              controller.enqueue(encoder.encode(chunk));
+            });
+
+            await anthropicStream.finalMessage();
+          }
 
           if (!streamClosed) {
             controller.enqueue(encoder.encode(`data: ${JSON.stringify({ done: true })}\n\n`));

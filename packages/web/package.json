@@ -20,6 +20,8 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.79.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1010.0",
+    "@aws-sdk/credential-providers": "^3.1010.0",
     "@composio/ao-core": "workspace:*",
     "@composio/ao-message-bus": "workspace:*",
     "@composio/ao-planner": "workspace:*",
