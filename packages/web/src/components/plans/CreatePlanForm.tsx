@@ -13,12 +13,14 @@ interface CreatePlanFormProps {
   projects: ProjectInfo[];
   onCreated: (planId: string) => void;
   onCancel: () => void;
+  onBrainstorm: (config: { project: string; description: string; skipTesting: boolean; maxConcurrency: number }) => void;
 }
 
 export const CreatePlanForm = memo(function CreatePlanForm({
   projects,
   onCreated,
   onCancel,
+  onBrainstorm,
 }: CreatePlanFormProps) {
   const [project, setProject] = useState(projects[0]?.id ?? "");
   const [description, setDescription] = useState("");
@@ -154,6 +156,19 @@ export const CreatePlanForm = memo(function CreatePlanForm({
           )}
         >
           {submitting ? "Creating..." : "Create Plan"}
+        </button>
+        <button
+          type="button"
+          onClick={() => onBrainstorm({ project, description, skipTesting, maxConcurrency })}
+          disabled={submitting || !project}
+          className={cn(
+            "px-4 py-2 rounded-md text-xs font-medium transition-colors",
+            submitting || !project
+              ? "bg-zinc-800 text-zinc-600 cursor-not-allowed"
+              : "bg-purple-600 text-white hover:bg-purple-500",
+          )}
+        >
+          Brainstorm
         </button>
         <button
           type="button"

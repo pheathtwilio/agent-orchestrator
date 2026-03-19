@@ -8,6 +8,7 @@ import { TaskQueueLog } from "./plans/TaskQueueLog";
 import { PlanSummaryPanel } from "./plans/PlanSummaryPanel";
 import { UsageBanner } from "./plans/UsageBanner";
 import { CreatePlanForm } from "./plans/CreatePlanForm";
+import { BrainstormModal } from "./plans/BrainstormModal";
 
 // ── Types ──
 
@@ -127,6 +128,12 @@ export function PlansDashboard() {
   const [branches, setBranches] = useState<BranchInfo[]>([]);
   const [defaultBranch, setDefaultBranch] = useState<string>("main");
   const [pullRequests, setPullRequests] = useState<PRListItem[]>([]);
+  const [brainstormConfig, setBrainstormConfig] = useState<{
+    project: string;
+    description: string;
+    skipTesting: boolean;
+    maxConcurrency: number;
+  } | null>(null);
 
   // SSE connection for the selected plan
   const { snapshot, messages, outputLines, connected } = usePlanEvents(
@@ -353,9 +360,30 @@ export function PlansDashboard() {
                 fetchPlans();
               }}
               onCancel={() => setShowCreateForm(false)}
+              onBrainstorm={(config) => {
+                setShowCreateForm(false);
+                setBrainstormConfig(config);
+              }}
             />
           </div>
         </div>
+      )}
+
+      {/* Brainstorm modal */}
+      {brainstormConfig && (
+        <BrainstormModal
+          open={!!brainstormConfig}
+          onClose={() => setBrainstormConfig(null)}
+          project={brainstormConfig.project}
+          skipTesting={brainstormConfig.skipTesting}
+          maxConcurrency={brainstormConfig.maxConcurrency}
+          initialDescription={brainstormConfig.description}
+          onPlanCreated={(planId) => {
+            setBrainstormConfig(null);
+            setSelectedPlanId(planId);
+            fetchPlans();
+          }}
+        />
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
