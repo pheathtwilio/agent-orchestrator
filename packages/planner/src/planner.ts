@@ -48,6 +48,8 @@ export interface PlannerDeps {
   }) => Promise<string>;
   /** Callback to kill a session */
   killSession: (sessionId: string) => Promise<void>;
+  /** Callback to merge all PRs for a plan's completed tasks and delete branches */
+  mergePlanPRs?: (planId: string, taskNodes: BusTaskNode[]) => Promise<{ merged: number; failed: string[] }>;
 }
 
 export interface Planner {
@@ -469,8 +471,11 @@ export function createPlanner(
       `   - Implementation quality: brief assessment`,
       `   - Any warnings or follow-up items`,
       "",
-      `NOTE: Container and worktree cleanup is handled automatically by the orchestrator.`,
-      `You do NOT need to clean up Docker containers or git worktrees.`,
+      `NOTE: When you report TASK_COMPLETE, the orchestrator will automatically:`,
+      `- Merge all open PRs from the implementation branches (squash merge)`,
+      `- Remove agent containers and git worktrees`,
+      `- Delete feature branches`,
+      `You do NOT need to merge PRs or clean up resources yourself.`,
     ].join("\n");
 
     // Add a visible node to the graph
@@ -982,13 +987,38 @@ export function createPlanner(
               detail: (message.payload.summary as string) ?? "Build verification passed",
             });
 
-            // Clean up agent containers and sessions before completing
+            // Merge all PRs from completed implementation tasks
+            if (deps.mergePlanPRs) {
+              const implTasks = plan.taskGraph.nodes.filter((n) =>
+                n.status === "complete" &&
+                n.id !== "integration-test" &&
+                n.id !== "verify-build" &&
+                !n.id.startsWith("doctor-"),
+              );
+              try {
+                const result = await deps.mergePlanPRs(plan.id, implTasks);
+                emit({
+                  type: "plan_complete",
+                  planId,
+                  detail: `Merged ${result.merged} PR(s)${result.failed.length > 0 ? `, failed to merge: ${result.failed.join(", ")}` : ""}`,
+                });
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                emit({
+                  type: "plan_complete",
+                  planId,
+                  detail: `PR merge step failed: ${msg} — manual merge may be needed`,
+                });
+              }
+            }
+
+            // Clean up agent containers, worktrees, and sessions
             await cleanupPlanResources(plan);
 
             emit({
               type: "plan_complete",
               planId,
-              detail: "All tasks verified — plan complete",
+              detail: "All tasks verified, PRs merged, resources cleaned up — plan complete",
             });
             plan.phase = "complete";
 

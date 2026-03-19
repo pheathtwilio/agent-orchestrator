@@ -10,9 +10,10 @@ import {
   createMessageBus,
   createFileLockRegistry,
   createTaskStore,
+  type TaskNode,
 } from "@composio/ao-message-bus";
 import { createPlanner, type PlannerEvent } from "@composio/ao-planner";
-import { getServices } from "./services";
+import { getServices, getSCM } from "./services";
 
 const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379";
 
@@ -49,6 +50,56 @@ if (!globalForExecutor._aoAutoRestartDone) {
       }
     }
   }, 5000);
+}
+
+/**
+ * Merge all PRs from completed plan tasks.
+ * Uses the SCM plugin to squash-merge each PR and delete the branch.
+ */
+async function mergePlanPRs(
+  _planId: string,
+  taskNodes: TaskNode[],
+): Promise<{ merged: number; failed: string[] }> {
+  const { config, registry, sessionManager } = await getServices();
+  const projectId = Object.keys(config.projects)[0];
+  const project = projectId ? config.projects[projectId] : undefined;
+  const scm = getSCM(registry, project);
+  if (!scm) return { merged: 0, failed: [] };
+
+  const sessions = await sessionManager.list();
+  let merged = 0;
+  const failed: string[] = [];
+
+  // Build a set of session IDs from the plan's completed tasks
+  const taskSessionIds = new Set(
+    taskNodes.map((n) => n.assignedTo).filter((id): id is string => id !== null),
+  );
+
+  for (const session of sessions) {
+    if (!session.pr || !taskSessionIds.has(session.id)) continue;
+
+    try {
+      const state = await scm.getPRState(session.pr);
+      if (state !== "open") continue;
+
+      const mergeability = await scm.getMergeability(session.pr);
+      if (!mergeability.mergeable) {
+        console.log(`[plan-executor] PR #${session.pr.number} not mergeable: ${mergeability.blockers?.join(", ")}`);
+        failed.push(`PR #${session.pr.number}`);
+        continue;
+      }
+
+      await scm.mergePR(session.pr, "squash");
+      merged++;
+      console.log(`[plan-executor] Merged PR #${session.pr.number} (squash)`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[plan-executor] Failed to merge PR #${session.pr.number}: ${msg}`);
+      failed.push(`PR #${session.pr.number}`);
+    }
+  }
+
+  return { merged, failed };
 }
 
 export interface ExecutePlanOptions {
@@ -100,6 +151,7 @@ export async function createAndExecutePlan(
       killSession: async (sessionId) => {
         await sessionManager.kill(sessionId);
       },
+      mergePlanPRs,
     },
     {
       requireApproval: false,
@@ -300,6 +352,7 @@ export async function restartAllWatchers(
           killSession: async (sessionId) => {
             await sessionManager.kill(sessionId);
           },
+          mergePlanPRs,
         },
         {
           requireApproval: false,
@@ -372,6 +425,7 @@ export async function resumePlan(
       killSession: async (sessionId) => {
         await sessionManager.kill(sessionId);
       },
+      mergePlanPRs,
     },
     {
       requireApproval: false,
@@ -437,6 +491,7 @@ export async function retryPlan(
       killSession: async (sessionId) => {
         await sessionManager.kill(sessionId);
       },
+      mergePlanPRs,
     },
     {
       requireApproval: false,
