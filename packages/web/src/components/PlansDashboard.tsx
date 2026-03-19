@@ -40,6 +40,16 @@ interface BranchInfo {
   lastCommitMessage: string;
 }
 
+interface PRListItem {
+  number: number;
+  title: string;
+  branch: string;
+  author: string;
+  isDraft: boolean;
+  url: string;
+  updatedAt: string;
+}
+
 // ── Helpers ──
 
 function ProgressBar({ percent }: { percent: number }) {
@@ -116,6 +126,7 @@ export function PlansDashboard() {
   const [showArchived, setShowArchived] = useState(false);
   const [branches, setBranches] = useState<BranchInfo[]>([]);
   const [defaultBranch, setDefaultBranch] = useState<string>("main");
+  const [pullRequests, setPullRequests] = useState<PRListItem[]>([]);
 
   // SSE connection for the selected plan
   const { snapshot, messages, outputLines, connected } = usePlanEvents(
@@ -156,6 +167,16 @@ export function PlansDashboard() {
     }
   }, []);
 
+  const fetchPRs = useCallback(async () => {
+    try {
+      const res = await fetch("/api/projects/prs");
+      const data = await res.json();
+      setPullRequests(data.prs ?? []);
+    } catch {
+      // Retry next poll
+    }
+  }, []);
+
   useEffect(() => {
     fetch("/api/projects")
       .then((r) => r.json())
@@ -164,13 +185,15 @@ export function PlansDashboard() {
     fetchPlans();
     fetchContainers();
     fetchBranches();
+    fetchPRs();
     const interval = setInterval(() => {
       fetchPlans();
       fetchContainers();
       fetchBranches();
+      fetchPRs();
     }, 10000);
     return () => clearInterval(interval);
-  }, [fetchPlans, fetchContainers, fetchBranches]);
+  }, [fetchPlans, fetchContainers, fetchBranches, fetchPRs]);
 
   const primaryProject = projects[0];
 
@@ -511,6 +534,42 @@ export function PlansDashboard() {
                     </div>
                   );
                 })}
+              </div>
+            </div>
+          )}
+
+          {/* Pull Requests */}
+          {pullRequests.length > 0 && (
+            <div>
+              <h2 className="text-sm font-semibold mb-2 text-zinc-400 uppercase tracking-wider">
+                Pull Requests
+                <span className="text-[10px] text-zinc-600 font-normal ml-2">{pullRequests.length}</span>
+              </h2>
+              <div className="space-y-1 max-h-64 overflow-y-auto">
+                {pullRequests.map((pr) => (
+                  <a
+                    key={pr.number}
+                    href={pr.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="block text-[10px] p-1.5 rounded border bg-zinc-900/50 border-zinc-800/50 hover:border-zinc-700 transition-colors"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <span className={cn(
+                        "w-1.5 h-1.5 rounded-full flex-shrink-0",
+                        pr.isDraft ? "bg-zinc-500" : "bg-green-400",
+                      )} />
+                      <span className="text-zinc-300 truncate">
+                        <span className="text-zinc-500 mr-1">#{pr.number}</span>
+                        {pr.title}
+                      </span>
+                    </div>
+                    <div className="flex justify-between mt-0.5 pl-3">
+                      <span className="text-cyan-500/70 font-mono truncate">{pr.branch}</span>
+                      <span className="text-zinc-700 whitespace-nowrap ml-2">{pr.author}</span>
+                    </div>
+                  </a>
+                ))}
               </div>
             </div>
           )}
