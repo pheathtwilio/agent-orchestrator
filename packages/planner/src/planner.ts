@@ -819,8 +819,10 @@ export function createPlanner(
       const allComplete = graph.nodes.every((n) => n.status === "complete");
       const hasFailed = graph.nodes.some((n) => n.status === "failed");
       const allTerminal = graph.nodes.every((n) => n.status === "complete" || n.status === "failed");
+      const allPending = graph.nodes.every((n) => n.status === "pending");
       let phase: PlanPhase;
       if (allComplete) phase = "complete";
+      else if (allPending) phase = "review"; // fresh or fully-reset plan
       else if (hasInProgress) phase = "executing";
       else if (hasPending && !allTerminal) phase = "executing";
       else if (hasFailed) phase = "failed";
