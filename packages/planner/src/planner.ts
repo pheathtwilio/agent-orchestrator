@@ -987,16 +987,12 @@ export function createPlanner(
               detail: (message.payload.summary as string) ?? "Build verification passed",
             });
 
-            // Merge all PRs from completed implementation tasks
+            // Merge PRs and clean up containers/branches for all plan tasks
             if (deps.mergePlanPRs) {
-              const implTasks = plan.taskGraph.nodes.filter((n) =>
-                n.status === "complete" &&
-                n.id !== "integration-test" &&
-                n.id !== "verify-build" &&
-                !n.id.startsWith("doctor-"),
-              );
+              // Pass all nodes — mergePlanPRs merges PRs for implementation
+              // branches and also cleans up containers for all tasks
               try {
-                const result = await deps.mergePlanPRs(plan.id, implTasks);
+                const result = await deps.mergePlanPRs(plan.id, plan.taskGraph.nodes);
                 emit({
                   type: "plan_complete",
                   planId,

@@ -19,7 +19,7 @@ import {
   type CleanupResult,
   type CleanupConfig,
 } from "@composio/ao-planner";
-import { getServices, getSCM } from "./services";
+import { getServices } from "./services";
 
 const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379";
 
@@ -59,53 +59,131 @@ if (!globalForExecutor._aoAutoRestartDone) {
 }
 
 /**
- * Merge all PRs from completed plan tasks.
- * Uses the SCM plugin to squash-merge each PR and delete the branch.
+ * Merge all PRs from completed plan tasks, then clean up branches and containers.
+ *
+ * Uses `gh` CLI directly to find PRs by branch name — the session manager
+ * doesn't track PRs created inside agent containers, so we can't rely on
+ * session.pr being populated.
  */
 async function mergePlanPRs(
   _planId: string,
   taskNodes: TaskNode[],
 ): Promise<{ merged: number; failed: string[] }> {
-  const { config, registry, sessionManager } = await getServices();
+  const { config } = await getServices();
   const projectId = Object.keys(config.projects)[0];
   const project = projectId ? config.projects[projectId] : undefined;
-  const scm = getSCM(registry, project);
-  if (!scm) return { merged: 0, failed: [] };
+  if (!project) return { merged: 0, failed: [] };
 
-  const sessions = await sessionManager.list();
+  const repoPath = project.path.replace(/^~/, process.env.HOME || "");
+  const repo = project.repo;
   let merged = 0;
   const failed: string[] = [];
 
-  // Build a set of session IDs from the plan's completed tasks
-  const taskSessionIds = new Set(
-    taskNodes.map((n) => n.assignedTo).filter((id): id is string => id !== null),
-  );
+  // Collect branches from completed implementation task nodes (not doctor/test/verify)
+  const implBranches = taskNodes
+    .filter((n) =>
+      n.status === "complete" &&
+      n.id !== "integration-test" &&
+      n.id !== "verify-build" &&
+      !n.id.startsWith("doctor-"),
+    )
+    .map((n) => n.branch)
+    .filter((b): b is string => b !== null);
 
-  for (const session of sessions) {
-    if (!session.pr || !taskSessionIds.has(session.id)) continue;
+  // All branches (including doctor/test/verify) for cleanup
+  const allBranches = taskNodes
+    .map((n) => n.branch)
+    .filter((b): b is string => b !== null);
 
+  // For each implementation branch, find and merge the corresponding PR via gh CLI
+  for (const branch of implBranches) {
     try {
-      const state = await scm.getPRState(session.pr);
-      if (state !== "open") continue;
+      // Find PR by head branch
+      const prJson = await execShell("gh", [
+        "pr", "list",
+        "--repo", repo,
+        "--head", branch,
+        "--state", "open",
+        "--json", "number",
+        "--limit", "1",
+      ], repoPath);
 
-      const mergeability = await scm.getMergeability(session.pr);
-      if (!mergeability.mergeable) {
-        console.log(`[plan-executor] PR #${session.pr.number} not mergeable: ${mergeability.blockers?.join(", ")}`);
-        failed.push(`PR #${session.pr.number}`);
-        continue;
-      }
+      if (!prJson) continue;
+      const prs = JSON.parse(prJson) as Array<{ number: number }>;
+      if (prs.length === 0) continue;
 
-      await scm.mergePR(session.pr, "squash");
+      const prNumber = prs[0].number;
+
+      // Squash merge with branch deletion
+      await execShell("gh", [
+        "pr", "merge", String(prNumber),
+        "--repo", repo,
+        "--squash",
+        "--delete-branch",
+      ], repoPath);
+
       merged++;
-      console.log(`[plan-executor] Merged PR #${session.pr.number} (squash)`);
+      console.log(`[plan-executor] Merged PR #${prNumber} from ${branch} (squash)`);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[plan-executor] Failed to merge PR #${session.pr.number}: ${msg}`);
-      failed.push(`PR #${session.pr.number}`);
+      console.error(`[plan-executor] Failed to merge PR for branch ${branch}: ${msg}`);
+      failed.push(branch);
+    }
+  }
+
+  // Clean up any remaining local and remote branches
+  for (const branch of allBranches) {
+    try {
+      await execShell("git", ["branch", "-D", branch], repoPath);
+    } catch {
+      // Branch may already be deleted by --delete-branch or never existed locally
+    }
+    try {
+      await execShell("git", ["push", "origin", "--delete", branch], repoPath);
+    } catch {
+      // Remote branch may already be gone
+    }
+  }
+
+  // Force-remove agent containers (sessionManager.kill may miss dead containers)
+  for (const node of taskNodes) {
+    if (!node.assignedTo) continue;
+    const containerName = `ao-${node.assignedTo}`;
+    try {
+      await execShell("docker", ["rm", "-f", containerName], undefined);
+    } catch {
+      // Container may already be gone
     }
   }
 
   return { merged, failed };
+}
+
+/** Run a shell command and return stdout, or null on failure */
+async function execShell(
+  cmd: string,
+  args: string[],
+  cwd: string | undefined,
+): Promise<string | null> {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const execFileAsync = promisify(execFile);
+  // Ensure homebrew paths are available
+  const env = { ...process.env };
+  const path = env.PATH ?? "";
+  if (!path.includes("/opt/homebrew/bin")) {
+    env.PATH = `/opt/homebrew/bin:/usr/local/bin:${path}`;
+  }
+  try {
+    const { stdout } = await execFileAsync(cmd, args, {
+      cwd: cwd || undefined,
+      timeout: 30_000,
+      env,
+    });
+    return stdout.trimEnd();
+  } catch {
+    return null;
+  }
 }
 
 export interface ExecutePlanOptions {
