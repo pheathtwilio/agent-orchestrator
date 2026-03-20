@@ -7,6 +7,7 @@ coverage/
 *.patch
 *-context.md
 packages/web/screenshots/
+data/
 
 # Environment files (secrets)
 .env
