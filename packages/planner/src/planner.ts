@@ -24,8 +24,11 @@ import type {
   PlannerEvent,
   PlannerEventHandler,
   AgentSkill,
+  WorkflowStepSnapshot,
 } from "./types.js";
 import { DEFAULT_PLANNER_CONFIG } from "./types.js";
+import { evaluateStepCompletion, beginStep, type StepRunnerCallbacks } from "./step-runner.js";
+import { handleStepFailure, type FailureHandlerCallbacks } from "./step-failure-handler.js";
 
 // ============================================================================
 // PLANNER SERVICE
@@ -54,7 +57,11 @@ export interface PlannerDeps {
 
 export interface Planner {
   /** Plan and optionally execute a feature */
-  planFeature(projectId: string, featureDescription: string): Promise<ExecutionPlan>;
+  planFeature(projectId: string, featureDescription: string, options?: {
+    workflowId?: string;
+    workflowVersionId?: string;
+    workflowSnapshot?: WorkflowStepSnapshot[];
+  }): Promise<ExecutionPlan>;
 
   /** Approve a plan (if requireApproval is true) and start execution */
   approvePlan(planId: string): Promise<void>;
@@ -729,10 +736,65 @@ export function createPlanner(
     }
   }
 
+  /** Build callbacks for the step runner and failure handler modules. */
+  function buildStepRunnerCallbacks(): StepRunnerCallbacks {
+    return {
+      taskStore: deps.taskStore,
+      spawnSession: async (params) => {
+        return deps.spawnSession(params);
+      },
+      killSession: async (sessionId) => {
+        return deps.killSession(sessionId);
+      },
+      emitEvent: (event) => {
+        emit(event);
+      },
+      completePlan: async (plan) => {
+        // Merge PRs and cleanup — same as current verify-build completion logic
+        if (deps.mergePlanPRs) {
+          try {
+            await deps.mergePlanPRs(plan.id, plan.taskGraph.nodes);
+          } catch (err) {
+            console.error(`[planner] PR merge failed for ${plan.id}:`, err);
+          }
+        }
+        await cleanupPlanResources(plan);
+        plan.phase = "complete";
+        plan.updatedAt = Date.now();
+        emit({
+          type: "plan_complete",
+          planId: plan.id,
+          detail: "All workflow steps completed",
+        });
+      },
+    };
+  }
+
+  /** Build callbacks for the step failure handler module. */
+  function buildFailureHandlerCallbacks(): FailureHandlerCallbacks {
+    return {
+      spawnSession: async (params) => {
+        return deps.spawnSession(params);
+      },
+      killSession: async (sessionId) => {
+        return deps.killSession(sessionId);
+      },
+      emitEvent: (event) => {
+        emit(event);
+      },
+      taskStore: deps.taskStore,
+    };
+  }
+
   return {
     async planFeature(
       projectId: string,
       featureDescription: string,
+      options?: {
+        workflowId?: string;
+        workflowVersionId?: string;
+        workflowSnapshot?: WorkflowStepSnapshot[];
+      },
     ): Promise<ExecutionPlan> {
       const planId = `plan-${randomUUID().slice(0, 8)}`;
 
@@ -774,6 +836,27 @@ export function createPlanner(
         createdAt: Date.now(),
         updatedAt: Date.now(),
       };
+
+      // If workflow options provided, attach workflow metadata to the plan and persist
+      if (options?.workflowId) {
+        plan.workflowId = options.workflowId;
+        plan.workflowVersionId = options.workflowVersionId;
+        plan.workflowSnapshot = options.workflowSnapshot;
+        plan.currentStepIndex = 0;
+
+        // Tag all initial task nodes with workflowStepIndex 0
+        for (const node of graph.nodes) {
+          node.workflowStepIndex = 0;
+        }
+
+        // Persist workflow metadata to Redis
+        await deps.taskStore.updateGraphMetadata(plan.id, {
+          workflowId: options.workflowId,
+          workflowVersionId: options.workflowVersionId,
+          workflowSnapshot: options.workflowSnapshot,
+          currentStepIndex: 0,
+        });
+      }
 
       plans.set(planId, plan);
 
@@ -855,6 +938,14 @@ export function createPlanner(
         updatedAt: graph.updatedAt,
       };
 
+      // Restore workflow metadata from graph if present
+      if (graph.workflowId) {
+        plan.workflowId = graph.workflowId;
+        plan.workflowVersionId = graph.workflowVersionId;
+        plan.workflowSnapshot = graph.workflowSnapshot as WorkflowStepSnapshot[];
+        plan.currentStepIndex = graph.currentStepIndex ?? 0;
+      }
+
       plans.set(planId, plan);
       return plan;
     },
@@ -864,7 +955,7 @@ export function createPlanner(
       if (!plan) throw new Error(`Plan ${planId} not found`);
       if (plan.phase !== "review") throw new Error(`Plan ${planId} is in phase ${plan.phase}, not review`);
 
-      plan.phase = "executing";
+      plan.phase = plan.workflowSnapshot ? "step_executing" : "executing";
       plan.updatedAt = Date.now();
 
       emit({
@@ -1498,7 +1589,7 @@ export function createPlanner(
 
     async monitor(): Promise<void> {
       for (const [planId, plan] of plans) {
-        if (plan.phase !== "executing" && plan.phase !== "testing" && plan.phase !== "verifying") continue;
+        if (plan.phase !== "executing" && plan.phase !== "testing" && plan.phase !== "verifying" && plan.phase !== "step_executing") continue;
 
         // Check for deadlocks
         const deadlocks = await deps.fileLocks.detectDeadlocks();
