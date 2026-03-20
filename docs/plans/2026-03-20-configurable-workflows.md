@@ -8,7 +8,7 @@
 
 **Tech Stack:** SQLite via `better-sqlite3`, Next.js App Router, React, existing zinc/cyan design system, Redis (unchanged for task/plan state)
 
-**Spec:** `docs/superpowers/specs/2026-03-20-configurable-workflows-design.md`
+**Spec:** `docs/specs/2026-03-20-configurable-workflows-design.md`
 
 ---
 
@@ -37,6 +37,7 @@
 
 ### Modified Files
 - `packages/web/package.json` — Add `better-sqlite3` dependency
+- `packages/web/next.config.js` — Add `better-sqlite3` to serverExternalPackages
 - `packages/message-bus/src/types.ts` — Add `workflowStepIndex` to `TaskNode`
 - `packages/planner/src/types.ts` — Update `PlanPhase`, add `WorkflowStep` type, update event types
 - `packages/planner/src/planner.ts` — Replace hardcoded phases with step runner calls
@@ -57,11 +58,13 @@
 - Modify: `packages/message-bus/src/types.ts`
 - Modify: `packages/planner/src/types.ts`
 
-- [ ] **Step 1: Install better-sqlite3**
+- [ ] **Step 1: Install better-sqlite3 and configure Next.js**
 
 ```bash
 cd packages/web && npm install better-sqlite3 && npm install -D @types/better-sqlite3
 ```
+
+Add `"better-sqlite3"` to the `serverExternalPackages` array in `packages/web/next.config.js` (same pattern as `@composio/core`). This prevents webpack from bundling the native module.
 
 - [ ] **Step 2: Create workflow-types.ts**
 
@@ -135,10 +138,10 @@ export type StepCondition =
 In `packages/message-bus/src/types.ts`, add to the `TaskNode` interface:
 
 ```typescript
-workflowStepIndex: number;  // which workflow step this task belongs to
+workflowStepIndex?: number;  // which workflow step this task belongs to
 ```
 
-Default to `0` for backward compatibility. Update `makeCleanupNode` and any factory functions to include `workflowStepIndex: 0`.
+Optional for backward compatibility — existing code that constructs `TaskNode` objects (e.g. `buildTaskGraph`, `spawnTestingAgent`, `spawnVerifyAgent`, `makeCleanupNode`) continues to work. The step runner defaults to `0` when undefined.
 
 - [ ] **Step 4: Update PlanPhase and event types in planner types**
 
@@ -212,9 +215,11 @@ Add `seedDefaultWorkflow()` function that checks if `"default-sdlc"` exists, and
 
 - [ ] **Step 3: Verify the store works**
 
+Start the Next.js dev server and hit the workflow API endpoint once the API routes are wired (Task 3). Alternatively, write a quick test file:
+
 ```bash
-cd packages/web && node -e "
-  const { getWorkflows, getSteps, getActiveSnapshot } = require('./src/lib/workflow-store');
+cd packages/web && npx tsx -e "
+  import { getWorkflows, getSteps, getActiveSnapshot } from './src/lib/workflow-store';
   console.log('Workflows:', getWorkflows());
   console.log('Steps:', getSteps('default-sdlc'));
   console.log('Active snapshot:', getActiveSnapshot('default-sdlc'));
@@ -380,11 +385,21 @@ This is the largest task — replacing hardcoded phase logic with step runner ca
 
 - [ ] **Step 1: Update plan creation to attach workflow snapshot**
 
-In `planFeature()`: accept `workflowSnapshot`, `workflowId`, `workflowVersionId` parameters. Store them on the `ExecutionPlan`. Set `currentStepIndex: 0`. Set initial task nodes' `workflowStepIndex: 0`.
+In `planFeature()`: add an optional third parameter as an options object to avoid breaking the public `Planner` interface:
 
-- [ ] **Step 2: Replace `finalizePlan()` with step advancement**
+```typescript
+planFeature(projectId: string, featureDescription: string, options?: {
+  workflowId?: string;
+  workflowVersionId?: string;
+  workflowSnapshot?: WorkflowStep[];
+}): Promise<ExecutionPlan>;
+```
 
-Remove `finalizePlan()`. In the task completion handler, after marking a task complete, call `evaluateStepCompletion()` from the step runner instead.
+When options are provided, store them on the `ExecutionPlan`. Set `currentStepIndex: 0`. Set initial task nodes' `workflowStepIndex: 0`.
+
+- [ ] **Step 2: Replace inline plan completion logic with step advancement**
+
+Remove the inline logic that currently triggers after all implementation tasks complete (the code that calls `spawnTestingAgent()` and later `spawnVerifyAgent()` after testing completes). Replace with a call to `evaluateStepCompletion()` from the step runner after each task completion.
 
 - [ ] **Step 3: Replace hardcoded TASK_COMPLETE handlers**
 
@@ -415,11 +430,15 @@ These are now handled by the step runner's `beginStep()` and the failure handler
 
 Replace `testing_started`/`verify_started` etc. with generic `step_started`, `step_complete`, `step_failed` events that include `stepIndex` and `stepName`.
 
-- [ ] **Step 9: Add legacy fallback**
+- [ ] **Step 9: Wire per-task testing to step config**
+
+Update `createTestTrigger` usage to read from the current step's `agent_config.per_task_testing` flag instead of the global `PlannerConfig.perTaskTesting`. When a task completes, look up its `workflowStepIndex`, find the step in the workflow snapshot, and check `step.agent_config.per_task_testing`.
+
+- [ ] **Step 10: Add legacy fallback**
 
 In `loadPlan()`: if the loaded plan has no `workflowSnapshot`, log a warning and continue with the old hardcoded logic. This preserves in-flight plans created before the migration.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 11: Commit**
 
 ```bash
 git add -A && git commit -m "refactor: replace hardcoded planner phases with generic step runner"
@@ -446,12 +465,14 @@ In `createAndExecutePlan()`:
 - Accept `workflowId`, `workflowVersionId`, `workflowSnapshot` in options
 - Pass them through to `planner.planFeature()`
 
-- [ ] **Step 3: Update resume/retry to read workflow from plan**
+- [ ] **Step 3: Update resume/retry in planner.ts**
 
-In `resumePlan()` and `retryPlan()`:
+The `resumePlan()` and `retryPlan()` methods live on the `Planner` object in `packages/planner/src/planner.ts` (not in plan-executor.ts — the executor just calls them). Update these methods:
 - After `loadPlan()`, the workflow snapshot is already in the plan's Redis data
-- `resumePlan()` resets failed tasks in the current step only
+- `resumePlan()` resets failed tasks in the current step (by `workflowStepIndex`) only
 - `retryPlan()` resets `currentStepIndex` to 0 and clears tasks from steps > 0
+
+Update `plan-executor.ts` to pass workflow data when creating the planner instance.
 
 - [ ] **Step 4: Commit**
 
@@ -577,25 +598,3 @@ Create a test plan, verify the step progress bar renders with the default SDLC w
 git add -A && git commit -m "feat: show workflow step progress in plan dashboard"
 ```
 
----
-
-### Task 12: Add `better-sqlite3` to Next.js Server External Packages
-
-**Files:**
-- Modify: `packages/web/next.config.js`
-
-- [ ] **Step 1: Add to serverExternalPackages**
-
-Add `"better-sqlite3"` to the `serverExternalPackages` array in `next.config.js` (same pattern as `@composio/core` and the AWS SDK packages). This prevents webpack from trying to bundle the native module.
-
-- [ ] **Step 2: Verify dev server starts without errors**
-
-```bash
-cd packages/web && npm run dev
-```
-
-- [ ] **Step 3: Commit**
-
-```bash
-git add -A && git commit -m "fix: add better-sqlite3 to serverExternalPackages"
-```
