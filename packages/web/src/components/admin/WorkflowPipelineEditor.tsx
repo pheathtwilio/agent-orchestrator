@@ -300,9 +300,33 @@ export const WorkflowPipelineEditor = forwardRef<
 
             {/* Add step button */}
             <button
-              onClick={() => {
-                // TODO: implement add step modal
-                alert("Add step functionality coming soon");
+              onClick={async () => {
+                try {
+                  const nextOrder = steps.length > 0
+                    ? Math.max(...steps.map((s) => s.sort_order)) + 1
+                    : 0;
+                  const res = await fetch(
+                    `/api/admin/workflows/${workflowId}/steps`,
+                    {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        name: `Step ${nextOrder + 1}`,
+                        description: "Describe what this step does",
+                        exit_criteria: { conditions: ["all_tasks_complete"] },
+                        failure_policy: { action: "fail_plan" },
+                        agent_config: { duties: "Define agent duties for this step" },
+                        is_conditional: false,
+                        sort_order: nextOrder,
+                      }),
+                    }
+                  );
+                  if (res.ok) {
+                    fetchSteps();
+                  }
+                } catch (err) {
+                  console.error("Failed to add step:", err);
+                }
               }}
               className="w-12 h-12 rounded-full border-2 border-dashed border-zinc-700 flex items-center justify-center text-zinc-500 hover:border-cyan-500 hover:text-cyan-400 transition-colors flex-shrink-0"
               aria-label="Add step"

@@ -135,6 +135,14 @@ function rowToStep(row: Record<string, unknown>): WorkflowStep {
   };
 }
 
+export function getStep(stepId: string): WorkflowStep | null {
+  const db = getDb();
+  const row = db
+    .prepare("SELECT * FROM workflow_steps WHERE id = ?")
+    .get(stepId) as Record<string, unknown> | undefined;
+  return row ? rowToStep(row) : null;
+}
+
 export function getSteps(workflowId: string): WorkflowStep[] {
   const db = getDb();
   const rows = db

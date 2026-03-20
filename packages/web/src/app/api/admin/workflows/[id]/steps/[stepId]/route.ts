@@ -1,8 +1,29 @@
 import { NextResponse } from "next/server";
-import { updateStep, removeStep } from "@/lib/workflow-store";
+import { getStep, updateStep, removeStep } from "@/lib/workflow-store";
 import type { WorkflowStep } from "@/lib/workflow-types";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * GET /api/admin/workflows/[id]/steps/[stepId] — retrieve a single step
+ */
+export async function GET(
+  _request: Request,
+  { params }: { params: Promise<{ id: string; stepId: string }> },
+): Promise<Response> {
+  const { stepId } = await params;
+
+  try {
+    const step = getStep(stepId);
+    if (!step) {
+      return NextResponse.json({ error: "Step not found" }, { status: 404 });
+    }
+    return NextResponse.json({ step });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
 
 /**
  * PUT /api/admin/workflows/[id]/steps/[stepId] — update a step
