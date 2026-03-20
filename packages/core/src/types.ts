@@ -199,6 +199,8 @@ export interface SessionSpawnConfig {
   runtimeConfig?: Record<string, unknown>;
   /** Extra environment variables merged into the runtime environment */
   environment?: Record<string, string>;
+  /** Extra metadata stored alongside the session (e.g. { planId: "plan-abc" }) */
+  metadata?: Record<string, string>;
 }
 
 /** Config for creating an orchestrator session */

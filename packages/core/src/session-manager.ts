@@ -1112,6 +1112,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
       lastActivityAt: new Date(),
       metadata: {
         ...(reusedOpenCodeSessionId ? { opencodeSessionId: reusedOpenCodeSessionId } : {}),
+        ...spawnConfig.metadata,
       },
     };
 
@@ -1127,6 +1128,7 @@ export function createSessionManager(deps: SessionManagerDeps): OpenCodeSessionM
         createdAt: new Date().toISOString(),
         runtimeHandle: JSON.stringify(handle),
         opencodeSessionId: reusedOpenCodeSessionId,
+        ...spawnConfig.metadata, // Persist extra metadata (e.g. planId)
       });
 
       if (plugins.agent.postLaunchSetup) {

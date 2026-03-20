@@ -246,6 +246,10 @@ export async function createAndExecutePlan(
             AO_SKILL: params.skill,
             AO_MODEL: params.model,
           },
+          metadata: {
+            planId: params.environment.AO_PLAN_ID,
+            taskId: params.environment.AO_TASK_ID,
+          },
         });
         return session.id;
       },
@@ -526,6 +530,10 @@ export async function resumePlan(
             AO_SKILL: params.skill,
             AO_MODEL: params.model,
           },
+          metadata: {
+            planId: params.environment.AO_PLAN_ID,
+            taskId: params.environment.AO_TASK_ID,
+          },
         });
         return session.id;
       },
@@ -592,6 +600,10 @@ export async function retryPlan(
             ...params.environment,
             AO_SKILL: params.skill,
             AO_MODEL: params.model,
+          },
+          metadata: {
+            planId: params.environment.AO_PLAN_ID,
+            taskId: params.environment.AO_TASK_ID,
           },
         });
         return session.id;

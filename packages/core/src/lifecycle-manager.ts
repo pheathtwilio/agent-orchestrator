@@ -805,7 +805,12 @@ export function createLifecycleManager(deps: LifecycleManagerDeps): LifecycleMan
       // Include sessions that are active OR whose status changed from what we last saw
       // (e.g., list() detected a dead runtime and marked it "killed" — we need to
       // process that transition even though the new status is terminal)
+      //
+      // Skip plan-managed sessions entirely — the planner handles their lifecycle,
+      // and polling them can overwhelm Docker with inspect calls when many containers
+      // are running or exited.
       const sessionsToCheck = sessions.filter((s) => {
+        if (s.metadata?.["planId"]) return false;
         if (s.status !== "merged" && s.status !== "killed") return true;
         const tracked = states.get(s.id);
         return tracked !== undefined && tracked !== s.status;
