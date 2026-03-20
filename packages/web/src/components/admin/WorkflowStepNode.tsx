@@ -6,15 +6,23 @@ import type { WorkflowStep } from "@/lib/workflow-types";
 interface WorkflowStepNodeProps {
   step: WorkflowStep;
   selected: boolean;
+  isFirst: boolean;
+  isLast: boolean;
   onClick: () => void;
   onDelete: (stepId: string) => void;
+  onMoveLeft: (stepId: string) => void;
+  onMoveRight: (stepId: string) => void;
 }
 
 export function WorkflowStepNode({
   step,
   selected,
+  isFirst,
+  isLast,
   onClick,
   onDelete,
+  onMoveLeft,
+  onMoveRight,
 }: WorkflowStepNodeProps) {
   const handleDelete = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -65,14 +73,37 @@ export function WorkflowStepNode({
         {step.description}
       </p>
 
-      {/* Failure policy badge */}
-      <div
-        className={cn(
-          "inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium border",
-          policyColor
-        )}
-      >
-        {step.failure_policy.action.replace("_", " ")}
+      {/* Bottom row: failure policy + reorder */}
+      <div className="flex items-center justify-between">
+        <div
+          className={cn(
+            "inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium border",
+            policyColor
+          )}
+        >
+          {step.failure_policy?.action?.replace("_", " ") ?? "unknown"}
+        </div>
+
+        <div className="flex items-center gap-0.5">
+          {!isFirst && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onMoveLeft(step.id); }}
+              className="w-5 h-5 flex items-center justify-center rounded text-zinc-500 hover:text-cyan-400 transition-colors"
+              aria-label="Move left"
+            >
+              ‹
+            </button>
+          )}
+          {!isLast && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onMoveRight(step.id); }}
+              className="w-5 h-5 flex items-center justify-center rounded text-zinc-500 hover:text-cyan-400 transition-colors"
+              aria-label="Move right"
+            >
+              ›
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

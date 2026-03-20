@@ -101,6 +101,7 @@ export default function AdminWorkflowsPage() {
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex">
       {/* Left sidebar */}
       <div className="w-[250px] border-r border-zinc-800 p-4 bg-zinc-950 flex-shrink-0">
+        <h1 className="text-lg font-bold text-zinc-100 mb-4">Workflows</h1>
         <div className="mb-4">
           <button
             onClick={handleCreateWorkflow}

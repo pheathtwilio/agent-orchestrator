@@ -93,6 +93,33 @@ export const WorkflowPipelineEditor = forwardRef<
     onStepSelect(stepId);
   };
 
+  const handleMoveStep = async (stepId: string, direction: "left" | "right") => {
+    const index = steps.findIndex((s) => s.id === stepId);
+    if (index < 0) return;
+    const swapIndex = direction === "left" ? index - 1 : index + 1;
+    if (swapIndex < 0 || swapIndex >= steps.length) return;
+
+    const newOrder = steps.map((s) => s.id);
+    [newOrder[index], newOrder[swapIndex]] = [newOrder[swapIndex], newOrder[index]];
+
+    // Optimistic update
+    const reordered = [...steps];
+    [reordered[index], reordered[swapIndex]] = [reordered[swapIndex], reordered[index]];
+    reordered.forEach((s, i) => (s.sort_order = i));
+    setSteps(reordered);
+
+    try {
+      await fetch(`/api/admin/workflows/${workflowId}/steps/reorder`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stepIds: newOrder }),
+      });
+    } catch (err) {
+      console.error("Failed to reorder steps:", err);
+      fetchSteps(); // Rollback on failure
+    }
+  };
+
   const handleDeleteStep = async (stepId: string) => {
     try {
       const res = await fetch(
@@ -265,8 +292,12 @@ export const WorkflowPipelineEditor = forwardRef<
                 <WorkflowStepNode
                   step={step}
                   selected={selectedStepId === step.id}
+                  isFirst={index === 0}
+                  isLast={index === steps.length - 1}
                   onClick={() => handleStepClick(step.id)}
                   onDelete={handleDeleteStep}
+                  onMoveLeft={(id) => handleMoveStep(id, "left")}
+                  onMoveRight={(id) => handleMoveStep(id, "right")}
                 />
 
                 {/* Arrow connector */}
@@ -313,9 +344,9 @@ export const WorkflowPipelineEditor = forwardRef<
                       body: JSON.stringify({
                         name: `Step ${nextOrder + 1}`,
                         description: "Describe what this step does",
-                        exit_criteria: { conditions: ["all_tasks_complete"] },
-                        failure_policy: { action: "fail_plan" },
-                        agent_config: { duties: "Define agent duties for this step" },
+                        exit_criteria: { programmatic: ["all_tasks_complete"], description: "" },
+                        failure_policy: { action: "fail_plan", description: "" },
+                        agent_config: { skill: "developer", model_tier: "primary" },
                         is_conditional: false,
                         sort_order: nextOrder,
                       }),

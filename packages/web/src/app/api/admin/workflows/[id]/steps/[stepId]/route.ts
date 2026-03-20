@@ -66,7 +66,7 @@ export async function PUT(
       return NextResponse.json({ error: "Step not found" }, { status: 404 });
     }
 
-    return NextResponse.json(updatedStep);
+    return NextResponse.json({ step: updatedStep });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: message }, { status: 500 });

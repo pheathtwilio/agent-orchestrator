@@ -65,7 +65,26 @@ export function WorkflowStepEditPanel({
   const [saveTimeout, setSaveTimeout] = useState<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    setLocalStep(step);
+    // Normalize step data to ensure all nested fields exist
+    const normalized: WorkflowStep = {
+      ...step,
+      exit_criteria: {
+        programmatic: step.exit_criteria?.programmatic ?? [],
+        description: step.exit_criteria?.description ?? "",
+      },
+      failure_policy: {
+        action: step.failure_policy?.action ?? "fail_plan",
+        max_retries: step.failure_policy?.max_retries,
+        description: step.failure_policy?.description ?? "",
+      },
+      agent_config: {
+        skill: step.agent_config?.skill ?? "developer",
+        model_tier: step.agent_config?.model_tier ?? "primary",
+        docker_image: step.agent_config?.docker_image,
+        per_task_testing: step.agent_config?.per_task_testing,
+      },
+    };
+    setLocalStep(normalized);
   }, [step]);
 
   const saveStep = useCallback(
