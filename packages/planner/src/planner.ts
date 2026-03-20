@@ -994,6 +994,71 @@ export function createPlanner(
           // Release file locks
           await deps.fileLocks.releaseAll(taskId);
 
+          // ── Workflow-aware path ──
+          if (plan.workflowSnapshot) {
+            // Update task status
+            await deps.taskStore.updateTask(plan.taskGraph.id, taskId, {
+              status: "complete",
+              result: message.payload.result as any ?? {
+                taskId,
+                sessionId: message.from,
+                status: "complete",
+                branch: (message.payload.branch as string) ?? "",
+                commits: (message.payload.commits as string[]) ?? [],
+                summary: (message.payload.summary as string) ?? "",
+              },
+              assignedTo: null,
+            });
+            const wfNode = plan.taskGraph.nodes.find((n) => n.id === taskId);
+            if (wfNode) {
+              wfNode.status = "complete";
+              wfNode.result = {
+                taskId,
+                sessionId: message.from,
+                status: "complete",
+                branch: (message.payload.branch as string) ?? "",
+                commits: (message.payload.commits as string[]) ?? [],
+                summary: (message.payload.summary as string) ?? "",
+              };
+              wfNode.assignedTo = null;
+            }
+            plan.activeSessions.delete(taskId);
+
+            // Doctor task completion: reset original task to pending
+            if (taskId.startsWith("doctor-")) {
+              const originalTaskId = taskId.replace(/^doctor-/, "");
+              await deps.taskStore.updateTask(plan.taskGraph.id, originalTaskId, { status: "pending", assignedTo: null });
+              const originalNode = plan.taskGraph.nodes.find((n) => n.id === originalTaskId);
+              if (originalNode) {
+                originalNode.status = "pending";
+                originalNode.assignedTo = null;
+              }
+              emit({
+                type: "doctor_complete",
+                planId: plan.id,
+                taskId,
+                detail: `Doctor healed ${originalTaskId}`,
+              });
+              // Don't evaluate step completion — the reset task will be spawned and eventually complete
+              await spawnReadyTasks(plan);
+              break;
+            }
+
+            emit({
+              type: "task_complete",
+              planId: plan.id,
+              taskId,
+              detail: `Task completed`,
+            });
+
+            // Evaluate step completion
+            await evaluateStepCompletion(plan, buildStepRunnerCallbacks());
+            // Also try to spawn any newly-ready tasks within the current step
+            await spawnReadyTasks(plan);
+            break;
+          }
+
+          // ── Legacy path (no workflow) ──
           const isDoctor = taskId.startsWith("doctor-");
           const isPerTaskTest = taskId.endsWith("-test") && taskId !== "integration-test";
           const isIntegrationTest = taskId === "integration-test";
@@ -1284,6 +1349,38 @@ export function createPlanner(
 
           const error = (message.payload.error as string) ?? "Unknown error";
 
+          // ── Workflow-aware path ──
+          if (plan.workflowSnapshot) {
+            plan.activeSessions.delete(taskId);
+            plan.updatedAt = Date.now();
+
+            await deps.taskStore.updateTask(plan.taskGraph.id, taskId, {
+              status: "failed",
+              assignedTo: null,
+            });
+            const wfFailedNode = plan.taskGraph.nodes.find((n) => n.id === taskId);
+            if (wfFailedNode) {
+              wfFailedNode.status = "failed";
+              wfFailedNode.assignedTo = null;
+            }
+
+            const step = plan.workflowSnapshot[plan.currentStepIndex ?? 0];
+            if (step) {
+              await handleStepFailure(plan, taskId, error, step, buildFailureHandlerCallbacks());
+            } else {
+              // No step found — fail the plan
+              plan.phase = "failed";
+              emit({
+                type: "plan_failed",
+                planId: plan.id,
+                taskId,
+                detail: `Task failed: ${error}`,
+              });
+            }
+            break;
+          }
+
+          // ── Legacy path (no workflow) ──
           // Doctor agent failed → mark original task as permanently failed
           if (taskId.startsWith("doctor-")) {
             plan.activeSessions.delete(taskId);
@@ -1523,7 +1620,7 @@ export function createPlanner(
           if (
             taskId &&
             (progressStatus === "tool_hung" || progressStatus === "subprocess_hung") &&
-            plan.phase === "executing"
+            (plan.phase === "executing" || plan.phase === "step_executing")
           ) {
             const sid = plan.activeSessions.get(taskId);
             const detail = progressStatus === "tool_hung"
@@ -1698,14 +1795,18 @@ export function createPlanner(
         await spawnReadyTasks(plan);
 
         // Check for completely stalled plans
-        if (plan.activeSessions.size === 0 && plan.phase === "executing") {
+        if (plan.activeSessions.size === 0 && (plan.phase === "executing" || plan.phase === "step_executing")) {
           const hasWork = plan.taskGraph.nodes.some(
             (n) => n.status === "pending" || n.status === "in_progress",
           );
           if (!hasWork) {
             const allComplete = plan.taskGraph.nodes.every((n) => n.status === "complete");
             if (allComplete) {
-              await finalizePlan(plan);
+              if (plan.workflowSnapshot) {
+                await evaluateStepCompletion(plan, buildStepRunnerCallbacks());
+              } else {
+                await finalizePlan(plan);
+              }
             }
           }
         }

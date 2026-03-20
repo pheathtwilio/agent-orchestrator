@@ -128,6 +128,9 @@ export interface WorkflowStepSnapshot {
 export type PlanPhase =
   | "planning"
   | "review"
+  | "executing"
+  | "testing"
+  | "verifying"
   | "step_executing"
   | "complete"
   | "failed"
