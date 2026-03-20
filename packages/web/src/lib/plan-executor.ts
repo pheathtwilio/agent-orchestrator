@@ -256,6 +256,9 @@ export async function createAndExecutePlan(
       killSession: async (sessionId) => {
         await sessionManager.kill(sessionId);
       },
+      destroyContainer: async (sessionId) => {
+        await execShell("docker", ["rm", "-f", `ao-${sessionId}`], undefined);
+      },
       mergePlanPRs,
     },
     {
@@ -540,6 +543,9 @@ export async function resumePlan(
       killSession: async (sessionId) => {
         await sessionManager.kill(sessionId);
       },
+      destroyContainer: async (sessionId) => {
+        await execShell("docker", ["rm", "-f", `ao-${sessionId}`], undefined);
+      },
       mergePlanPRs,
     },
     {
@@ -610,6 +616,9 @@ export async function retryPlan(
       },
       killSession: async (sessionId) => {
         await sessionManager.kill(sessionId);
+      },
+      destroyContainer: async (sessionId) => {
+        await execShell("docker", ["rm", "-f", `ao-${sessionId}`], undefined);
       },
       mergePlanPRs,
     },

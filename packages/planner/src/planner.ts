@@ -49,8 +49,10 @@ export interface PlannerDeps {
     dockerImage: string;
     environment: Record<string, string>;
   }) => Promise<string>;
-  /** Callback to kill a session */
+  /** Callback to kill a session (destroys container, worktree, and metadata) */
   killSession: (sessionId: string) => Promise<void>;
+  /** Callback to remove just the Docker container without touching worktree or session metadata */
+  destroyContainer?: (sessionId: string) => Promise<void>;
   /** Callback to merge all PRs for a plan's completed tasks and delete branches */
   mergePlanPRs?: (planId: string, taskNodes: BusTaskNode[]) => Promise<{ merged: number; failed: string[] }>;
 }
@@ -214,14 +216,14 @@ export function createPlanner(
     return { graph, assignments };
   }
 
-  /** Destroy an agent container after task completion/failure to prevent accumulation. */
-  async function destroySession(sessionId: string | undefined): Promise<void> {
+  /** Remove an agent container after task completion/failure to prevent accumulation.
+   *  Uses destroyContainer (container-only) if available, avoiding worktree/metadata deletion. */
+  function cleanupContainer(sessionId: string | undefined): void {
     if (!sessionId) return;
-    try {
-      await deps.killSession(sessionId);
-    } catch {
+    const destroy = deps.destroyContainer ?? deps.killSession;
+    destroy(sessionId).catch(() => {
       // Container may already be gone — that's fine
-    }
+    });
   }
 
   /** Spawn agents for all ready tasks, up to concurrency limit */
@@ -1033,7 +1035,7 @@ export function createPlanner(
               wfNode.assignedTo = null;
             }
             plan.activeSessions.delete(taskId);
-            await destroySession(message.from);
+            cleanupContainer(message.from);
 
             // Doctor task completion: reset original task to pending
             if (taskId.startsWith("doctor-")) {
@@ -1079,7 +1081,7 @@ export function createPlanner(
             // ── Doctor agent fixed the issue → retry the original task ──
             const originalTaskId = taskId.replace(/^doctor-/, "");
             plan.activeSessions.delete(taskId);
-            await destroySession(message.from);
+            cleanupContainer(message.from);
             plan.updatedAt = Date.now();
 
             const doctorNode = plan.taskGraph.nodes.find((n) => n.id === taskId);
@@ -1130,7 +1132,7 @@ export function createPlanner(
           if (taskId === "verify-build") {
             // ── Verify build passed → plan complete ──
             plan.activeSessions.delete(taskId);
-            await destroySession(message.from);
+            cleanupContainer(message.from);
             plan.updatedAt = Date.now();
 
             const verifyNode = plan.taskGraph.nodes.find((n) => n.id === "verify-build");
@@ -1192,7 +1194,7 @@ export function createPlanner(
           } else if (isIntegrationTest) {
             // ── Integration test passed → spawn verify agent ──
             plan.activeSessions.delete(taskId);
-            await destroySession(message.from);
+            cleanupContainer(message.from);
             plan.updatedAt = Date.now();
 
             const testNode = plan.taskGraph.nodes.find((n) => n.id === "integration-test");
@@ -1226,7 +1228,7 @@ export function createPlanner(
           } else if (isPerTaskTest && parentTaskId) {
             // ── Per-task test passed → mark parent task as complete ──
             plan.activeSessions.delete(taskId);
-            await destroySession(message.from);
+            cleanupContainer(message.from);
             plan.updatedAt = Date.now();
 
             const parentNode = plan.taskGraph.nodes.find((n) => n.id === parentTaskId);
@@ -1276,7 +1278,7 @@ export function createPlanner(
               });
 
               plan.activeSessions.delete(taskId);
-              await destroySession(message.from);
+              cleanupContainer(message.from);
               plan.updatedAt = Date.now();
 
               emit({
@@ -1336,7 +1338,7 @@ export function createPlanner(
               });
 
               plan.activeSessions.delete(taskId);
-              await destroySession(message.from);
+              cleanupContainer(message.from);
               plan.updatedAt = Date.now();
 
               emit({
@@ -1369,7 +1371,7 @@ export function createPlanner(
           // ── Workflow-aware path ──
           if (plan.workflowSnapshot) {
             plan.activeSessions.delete(taskId);
-            await destroySession(message.from);
+            cleanupContainer(message.from);
             plan.updatedAt = Date.now();
 
             await deps.taskStore.updateTask(plan.taskGraph.id, taskId, {
@@ -1402,7 +1404,7 @@ export function createPlanner(
           // Doctor agent failed → mark original task as permanently failed
           if (taskId.startsWith("doctor-")) {
             plan.activeSessions.delete(taskId);
-            await destroySession(message.from);
+            cleanupContainer(message.from);
             plan.updatedAt = Date.now();
 
             const doctorNode = plan.taskGraph.nodes.find((n) => n.id === taskId);
@@ -1440,7 +1442,7 @@ export function createPlanner(
           const failedParentId = isFailedPerTaskTest ? taskId.replace(/-test$/, "") : null;
 
           plan.activeSessions.delete(taskId);
-          await destroySession(message.from);
+          cleanupContainer(message.from);
           plan.updatedAt = Date.now();
 
           // Verify build failure → plan failed (verification found issues)
