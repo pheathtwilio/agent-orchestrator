@@ -159,6 +159,11 @@ export interface TaskGraph {
   nodes: TaskNode[];
   createdAt: number;
   updatedAt: number;
+  /** Workflow metadata — stored for plan reconstruction */
+  workflowId?: string;
+  workflowVersionId?: string;
+  workflowSnapshot?: unknown[];
+  currentStepIndex?: number;
 }
 
 export interface TaskStore {
@@ -194,6 +199,9 @@ export interface TaskStore {
 
   /** Get set of archived graph IDs */
   listArchivedIds(): Promise<Set<string>>;
+
+  /** Update graph-level metadata (e.g. currentStepIndex) without touching nodes */
+  updateGraphMetadata(graphId: string, update: Partial<Pick<TaskGraph, "currentStepIndex" | "workflowId" | "workflowVersionId" | "workflowSnapshot">>): Promise<void>;
 
   /** Graceful shutdown */
   disconnect(): Promise<void>;

@@ -167,6 +167,21 @@ export function createTaskStore(redisUrl?: string): TaskStore {
       return new Set(ids);
     },
 
+    async updateGraphMetadata(graphId, update): Promise<void> {
+      await ensureConnected();
+      const data = await redis.get(graphKey(graphId));
+      if (!data) return;
+
+      const graph = JSON.parse(data) as TaskGraph;
+      if (update.currentStepIndex !== undefined) graph.currentStepIndex = update.currentStepIndex;
+      if (update.workflowId !== undefined) graph.workflowId = update.workflowId;
+      if (update.workflowVersionId !== undefined) graph.workflowVersionId = update.workflowVersionId;
+      if (update.workflowSnapshot !== undefined) graph.workflowSnapshot = update.workflowSnapshot;
+      graph.updatedAt = Date.now();
+
+      await redis.set(graphKey(graphId), JSON.stringify(graph));
+    },
+
     async getUsage(planId: string): Promise<PlanUsage> {
       await ensureConnected();
       const data = await redis.hgetall(`ao:usage:${planId}`);

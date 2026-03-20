@@ -321,6 +321,8 @@ async function advanceToNextStep(
     // Found a step to execute — begin it.
     plan.currentStepIndex = idx;
     plan.updatedAt = Date.now();
+    // Persist step advancement to Redis atomically before spawning agents
+    await callbacks.taskStore.updateGraphMetadata(plan.id, { currentStepIndex: idx });
     await beginStep(plan, step, callbacks);
     return;
   }
@@ -328,6 +330,7 @@ async function advanceToNextStep(
   // All steps exhausted — plan is complete.
   plan.currentStepIndex = idx;
   plan.updatedAt = Date.now();
+  await callbacks.taskStore.updateGraphMetadata(plan.id, { currentStepIndex: idx });
   await callbacks.completePlan(plan);
 }
 
