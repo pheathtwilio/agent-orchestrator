@@ -53,6 +53,27 @@ const CONDITION_TYPES = [
   { value: "never", label: "Never" },
 ];
 
+function normalizeStep(s: WorkflowStep): WorkflowStep {
+  return {
+    ...s,
+    exit_criteria: {
+      programmatic: s.exit_criteria?.programmatic ?? [],
+      description: s.exit_criteria?.description ?? "",
+    },
+    failure_policy: {
+      action: s.failure_policy?.action ?? "fail_plan",
+      max_retries: s.failure_policy?.max_retries,
+      description: s.failure_policy?.description ?? "",
+    },
+    agent_config: {
+      skill: s.agent_config?.skill ?? "developer",
+      model_tier: s.agent_config?.model_tier ?? "primary",
+      docker_image: s.agent_config?.docker_image,
+      per_task_testing: s.agent_config?.per_task_testing,
+    },
+  };
+}
+
 export function WorkflowStepEditPanel({
   workflowId,
   stepId,
@@ -60,31 +81,12 @@ export function WorkflowStepEditPanel({
   onUpdate,
   onClose,
 }: WorkflowStepEditPanelProps) {
-  const [localStep, setLocalStep] = useState<WorkflowStep>(step);
+  const [localStep, setLocalStep] = useState<WorkflowStep>(() => normalizeStep(step));
   const [saving, setSaving] = useState(false);
   const [saveTimeout, setSaveTimeout] = useState<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    // Normalize step data to ensure all nested fields exist
-    const normalized: WorkflowStep = {
-      ...step,
-      exit_criteria: {
-        programmatic: step.exit_criteria?.programmatic ?? [],
-        description: step.exit_criteria?.description ?? "",
-      },
-      failure_policy: {
-        action: step.failure_policy?.action ?? "fail_plan",
-        max_retries: step.failure_policy?.max_retries,
-        description: step.failure_policy?.description ?? "",
-      },
-      agent_config: {
-        skill: step.agent_config?.skill ?? "developer",
-        model_tier: step.agent_config?.model_tier ?? "primary",
-        docker_image: step.agent_config?.docker_image,
-        per_task_testing: step.agent_config?.per_task_testing,
-      },
-    };
-    setLocalStep(normalized);
+    setLocalStep(normalizeStep(step));
   }, [step]);
 
   const saveStep = useCallback(
