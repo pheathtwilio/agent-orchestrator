@@ -38,6 +38,10 @@ export interface SessionUsage {
   updatedAt: number;
 }
 
+export interface WorkflowStep {
+  name: string;
+}
+
 export interface PlanSnapshot {
   plan: {
     id: string;
@@ -45,6 +49,8 @@ export interface PlanSnapshot {
     title: string;
     createdAt: number;
     updatedAt: number;
+    workflowSnapshot?: WorkflowStep[];
+    currentStepIndex?: number;
   };
   tasks: PlanTask[];
   usage: UsageTotals;

@@ -8,6 +8,7 @@ import { TaskQueueLog } from "./plans/TaskQueueLog";
 import { PlanSummaryPanel } from "./plans/PlanSummaryPanel";
 import { UsageBanner } from "./plans/UsageBanner";
 import { BrainstormModal } from "./plans/BrainstormModal";
+import { WorkflowStepProgress } from "./plans/WorkflowStepProgress";
 
 // ── Types ──
 
@@ -583,6 +584,14 @@ export function PlansDashboard() {
                     {" \u00b7 "}
                     Updated <TimeAgo timestamp={planDetail.updatedAt} />
                   </p>
+                  {snapshot?.plan.workflowSnapshot && snapshot.plan.currentStepIndex !== undefined && (
+                    <div className="mt-2">
+                      <WorkflowStepProgress
+                        steps={snapshot.plan.workflowSnapshot}
+                        currentStepIndex={snapshot.plan.currentStepIndex}
+                      />
+                    </div>
+                  )}
                 </div>
                 <div className="flex items-center gap-3">
                   {snapshot && <UsageBanner usage={snapshot.usage} />}

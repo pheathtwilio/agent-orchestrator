@@ -59,6 +59,8 @@ export async function GET(
         title: graph.title,
         createdAt: graph.createdAt,
         updatedAt: graph.updatedAt,
+        workflowSnapshot: graph.workflowSnapshot,
+        currentStepIndex: graph.currentStepIndex,
       },
       tasks: graph.nodes.map((n) => ({
         id: n.id,
