@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAndExecutePlan } from "@/lib/plan-executor";
+import { getActiveSnapshot } from "@/lib/workflow-store";
 
 export const dynamic = "force-dynamic";
 
@@ -37,11 +38,17 @@ export async function POST(request: Request): Promise<Response> {
   const maxConcurrency = typeof body.maxConcurrency === "number" ? body.maxConcurrency : 5;
 
   try {
+    // Resolve the active workflow for plan creation
+    const workflowData = getActiveSnapshot("default-sdlc");
+
     const result = await createAndExecutePlan({
       project,
       description,
       skipTesting,
       maxConcurrency,
+      workflowId: workflowData ? "default-sdlc" : undefined,
+      workflowVersionId: workflowData?.versionId,
+      workflowSnapshot: workflowData?.steps,
     });
 
     return NextResponse.json({

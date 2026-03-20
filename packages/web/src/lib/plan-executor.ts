@@ -204,6 +204,9 @@ export interface ExecutePlanOptions {
   description: string;
   skipTesting: boolean;
   maxConcurrency: number;
+  workflowId?: string;
+  workflowVersionId?: string;
+  workflowSnapshot?: unknown[];
 }
 
 export interface ExecutePlanResult {
@@ -264,7 +267,11 @@ export async function createAndExecutePlan(
   });
 
   // Create the plan (this also spawns ready tasks since requireApproval=false)
-  const plan = await planner.planFeature(opts.project, opts.description);
+  const plan = await planner.planFeature(opts.project, opts.description, {
+    workflowId: opts.workflowId,
+    workflowVersionId: opts.workflowVersionId,
+    workflowSnapshot: opts.workflowSnapshot,
+  });
 
   // Start background watch loop for this plan
   startWatchLoop(plan.id, planner, messageBus, taskStore);
