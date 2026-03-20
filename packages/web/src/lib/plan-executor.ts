@@ -23,6 +23,19 @@ import { getServices } from "./services";
 
 const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379";
 
+/**
+ * Check if the Docker daemon is reachable.
+ * Throws a user-friendly error if Docker is not running.
+ */
+async function ensureDockerRunning(): Promise<void> {
+  const result = await execShell("docker", ["info"], undefined);
+  if (result === null) {
+    throw new Error(
+      "Docker is not running. Please start Docker Desktop and try again.",
+    );
+  }
+}
+
 // Track running plan watchers — keyed by planId
 const activeWatchers = new Map<string, { stop: () => void }>();
 
@@ -207,6 +220,7 @@ export interface ExecutePlanResult {
 export async function createAndExecutePlan(
   opts: ExecutePlanOptions,
 ): Promise<ExecutePlanResult> {
+  await ensureDockerRunning();
   const { sessionManager } = await getServices();
 
   const messageBus = createMessageBus(REDIS_URL);
@@ -374,6 +388,7 @@ export function getActiveWatcherIds(): string[] {
 export async function restartAllWatchers(
   opts: { skipTesting: boolean; maxConcurrency: number },
 ): Promise<{ restarted: string[]; skipped: string[] }> {
+  await ensureDockerRunning();
   const taskStore = createTaskStore(REDIS_URL);
   const restarted: string[] = [];
   const skipped: string[] = [];
@@ -475,6 +490,7 @@ export async function resumePlan(
   planId: string,
   opts: { skipTesting: boolean; maxConcurrency: number; project?: string },
 ): Promise<{ resumed: string[] }> {
+  await ensureDockerRunning();
   const { sessionManager, config } = await getServices();
 
   const projectId = opts.project ?? Object.keys(config.projects)[0];
@@ -543,6 +559,7 @@ export async function retryPlan(
   planId: string,
   opts: { skipTesting: boolean; maxConcurrency: number; project?: string },
 ): Promise<void> {
+  await ensureDockerRunning();
   const { sessionManager, config } = await getServices();
 
   // Resolve the project ID — use provided, or fall back to first configured project
