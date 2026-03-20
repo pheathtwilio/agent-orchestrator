@@ -95,15 +95,40 @@ export const DEFAULT_PLANNER_CONFIG: PlannerConfig = {
 };
 
 // ============================================================================
+// WORKFLOW STEP SNAPSHOT (minimal subset for planner execution)
+// ============================================================================
+
+export interface WorkflowStepSnapshot {
+  name: string;
+  description: string;
+  sort_order: number;
+  exit_criteria: {
+    programmatic: string[];
+    description: string;
+  };
+  failure_policy: {
+    action: "spawn_doctor" | "retry" | "fail_plan" | "skip" | "notify";
+    max_retries?: number;
+    description: string;
+  };
+  agent_config: {
+    skill: string;
+    model_tier: string;
+    docker_image?: string;
+    per_task_testing?: boolean;
+  };
+  is_conditional: boolean;
+  condition: unknown | null;
+}
+
+// ============================================================================
 // PLAN EXECUTION STATE
 // ============================================================================
 
 export type PlanPhase =
   | "planning"
   | "review"
-  | "executing"
-  | "testing"
-  | "verifying"
+  | "step_executing"
   | "complete"
   | "failed"
   | "cancelled";
@@ -118,6 +143,10 @@ export interface ExecutionPlan {
   activeSessions: Map<string, string>;
   createdAt: number;
   updatedAt: number;
+  workflowId?: string;
+  workflowVersionId?: string;
+  workflowSnapshot?: WorkflowStepSnapshot[];
+  currentStepIndex?: number;
 }
 
 // ============================================================================
@@ -146,7 +175,10 @@ export type PlannerEventType =
   | "doctor_complete"
   | "doctor_failed"
   | "deadlock_detected"
-  | "plan_cancelled";
+  | "plan_cancelled"
+  | "step_started"
+  | "step_complete"
+  | "step_failed";
 
 export interface PlannerEvent {
   type: PlannerEventType;

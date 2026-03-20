@@ -149,6 +149,7 @@ export interface TaskNode {
   result: TaskResult | null;
   createdAt: number;
   updatedAt: number;
+  workflowStepIndex?: number;
 }
 
 export interface TaskGraph {
