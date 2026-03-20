@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { cn } from "@/lib/cn";
 import { WorkflowPipelineEditor } from "@/components/admin/WorkflowPipelineEditor";
+import { WorkflowStepEditPanel } from "@/components/admin/WorkflowStepEditPanel";
+import type { WorkflowStep } from "@/lib/workflow-types";
 
 interface WorkflowListItem {
   id: string;
@@ -17,7 +19,9 @@ export default function AdminWorkflowsPage() {
     null
   );
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
+  const [selectedStep, setSelectedStep] = useState<WorkflowStep | null>(null);
   const [loading, setLoading] = useState(true);
+  const editorRef = useRef<{ refreshSteps: () => void } | null>(null);
 
   useEffect(() => {
     async function fetchWorkflows() {
@@ -43,9 +47,46 @@ export default function AdminWorkflowsPage() {
     fetchWorkflows();
   }, [selectedWorkflowId]);
 
+  // Fetch step details when a step is selected
+  useEffect(() => {
+    if (!selectedWorkflowId || !selectedStepId) {
+      setSelectedStep(null);
+      return;
+    }
+
+    async function fetchStep() {
+      try {
+        const res = await fetch(
+          `/api/admin/workflows/${selectedWorkflowId}/steps/${selectedStepId}`
+        );
+        if (res.ok) {
+          const data = await res.json();
+          setSelectedStep(data.step);
+        }
+      } catch (err) {
+        console.error("Failed to fetch step:", err);
+      }
+    }
+
+    fetchStep();
+  }, [selectedWorkflowId, selectedStepId]);
+
   const handleCreateWorkflow = () => {
     // TODO: implement create workflow modal
     alert("Create workflow functionality coming soon");
+  };
+
+  const handleStepUpdate = (updatedStep: WorkflowStep) => {
+    setSelectedStep(updatedStep);
+    // Trigger a refresh in the pipeline editor
+    if (editorRef.current) {
+      editorRef.current.refreshSteps();
+    }
+  };
+
+  const handleCloseEditPanel = () => {
+    setSelectedStepId(null);
+    setSelectedStep(null);
   };
 
   if (loading) {
@@ -82,7 +123,11 @@ export default function AdminWorkflowsPage() {
             workflows.map((workflow) => (
               <button
                 key={workflow.id}
-                onClick={() => setSelectedWorkflowId(workflow.id)}
+                onClick={() => {
+                  setSelectedWorkflowId(workflow.id);
+                  setSelectedStepId(null);
+                  setSelectedStep(null);
+                }}
                 className={cn(
                   "w-full text-left p-3 rounded-lg border transition-all",
                   selectedWorkflowId === workflow.id
@@ -109,12 +154,13 @@ export default function AdminWorkflowsPage() {
         </div>
       </div>
 
-      {/* Main area */}
+      {/* Main area - pipeline editor */}
       <div className="flex-1 p-6">
         {selectedWorkflowId ? (
           <WorkflowPipelineEditor
             workflowId={selectedWorkflowId}
             onStepSelect={setSelectedStepId}
+            ref={editorRef}
           />
         ) : (
           <div className="flex items-center justify-center h-64 text-zinc-600 text-sm">
@@ -122,6 +168,17 @@ export default function AdminWorkflowsPage() {
           </div>
         )}
       </div>
+
+      {/* Right side - edit panel */}
+      {selectedWorkflowId && selectedStepId && selectedStep && (
+        <WorkflowStepEditPanel
+          workflowId={selectedWorkflowId}
+          stepId={selectedStepId}
+          step={selectedStep}
+          onUpdate={handleStepUpdate}
+          onClose={handleCloseEditPanel}
+        />
+      )}
     </div>
   );
 }

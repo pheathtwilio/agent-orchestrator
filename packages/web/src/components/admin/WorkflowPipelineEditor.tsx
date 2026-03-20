@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import {
+  useEffect,
+  useState,
+  forwardRef,
+  useImperativeHandle,
+  useCallback,
+} from "react";
 import { WorkflowStepNode } from "./WorkflowStepNode";
 import type { WorkflowStep } from "@/lib/workflow-types";
 
@@ -9,51 +15,78 @@ interface WorkflowPipelineEditorProps {
   onStepSelect: (stepId: string | null) => void;
 }
 
-export function WorkflowPipelineEditor({
-  workflowId,
-  onStepSelect,
-}: WorkflowPipelineEditorProps) {
+interface WorkflowVersion {
+  id: string;
+  version: number;
+  created_at: number;
+}
+
+export const WorkflowPipelineEditor = forwardRef<
+  { refreshSteps: () => void },
+  WorkflowPipelineEditorProps
+>(({ workflowId, onStepSelect }, ref) => {
   const [steps, setSteps] = useState<WorkflowStep[]>([]);
   const [workflowName, setWorkflowName] = useState<string>("");
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [publishing, setPublishing] = useState(false);
   const [publishedVersion, setPublishedVersion] = useState<number | null>(null);
+  const [versions, setVersions] = useState<WorkflowVersion[]>([]);
+  const [showVersions, setShowVersions] = useState(false);
+  const [restoringVersion, setRestoringVersion] = useState<number | null>(null);
+
+  const fetchSteps = useCallback(async () => {
+    setLoading(true);
+    setSelectedStepId(null);
+    setPublishedVersion(null);
+    onStepSelect(null);
+
+    try {
+      const [stepsRes, workflowRes] = await Promise.all([
+        fetch(`/api/admin/workflows/${workflowId}/steps`),
+        fetch(`/api/admin/workflows/${workflowId}`),
+      ]);
+
+      if (stepsRes.ok) {
+        const data = await stepsRes.json();
+        const sortedSteps = (data.steps || []).sort(
+          (a: WorkflowStep, b: WorkflowStep) => a.sort_order - b.sort_order
+        );
+        setSteps(sortedSteps);
+      }
+
+      if (workflowRes.ok) {
+        const data = await workflowRes.json();
+        setWorkflowName(data.workflow?.name || "Workflow");
+      }
+    } catch (err) {
+      console.error("Failed to fetch workflow steps:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, [workflowId, onStepSelect]);
+
+  const fetchVersions = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/admin/workflows/${workflowId}/versions`);
+      if (res.ok) {
+        const data = await res.json();
+        setVersions(data.versions || []);
+      }
+    } catch (err) {
+      console.error("Failed to fetch versions:", err);
+    }
+  }, [workflowId]);
 
   useEffect(() => {
-    async function fetchSteps() {
-      setLoading(true);
-      setSelectedStepId(null);
-      setPublishedVersion(null);
-      onStepSelect(null);
-
-      try {
-        const [stepsRes, workflowRes] = await Promise.all([
-          fetch(`/api/admin/workflows/${workflowId}/steps`),
-          fetch(`/api/admin/workflows/${workflowId}`),
-        ]);
-
-        if (stepsRes.ok) {
-          const data = await stepsRes.json();
-          const sortedSteps = (data.steps || []).sort(
-            (a: WorkflowStep, b: WorkflowStep) => a.sort_order - b.sort_order
-          );
-          setSteps(sortedSteps);
-        }
-
-        if (workflowRes.ok) {
-          const data = await workflowRes.json();
-          setWorkflowName(data.workflow?.name || "Workflow");
-        }
-      } catch (err) {
-        console.error("Failed to fetch workflow steps:", err);
-      } finally {
-        setLoading(false);
-      }
-    }
-
     fetchSteps();
-  }, [workflowId, onStepSelect]);
+    fetchVersions();
+  }, [fetchSteps, fetchVersions]);
+
+  // Expose refresh method to parent
+  useImperativeHandle(ref, () => ({
+    refreshSteps: fetchSteps,
+  }));
 
   const handleStepClick = (stepId: string) => {
     setSelectedStepId(stepId);
@@ -62,9 +95,12 @@ export function WorkflowPipelineEditor({
 
   const handleDeleteStep = async (stepId: string) => {
     try {
-      const res = await fetch(`/api/admin/workflows/${workflowId}/steps/${stepId}`, {
-        method: "DELETE",
-      });
+      const res = await fetch(
+        `/api/admin/workflows/${workflowId}/steps/${stepId}`,
+        {
+          method: "DELETE",
+        }
+      );
 
       if (res.ok) {
         setSteps((prev) => prev.filter((s) => s.id !== stepId));
@@ -91,12 +127,45 @@ export function WorkflowPipelineEditor({
         const data = await res.json();
         setPublishedVersion(data.version);
         setTimeout(() => setPublishedVersion(null), 3000);
+        fetchVersions(); // Refresh version list
       }
     } catch (err) {
       console.error("Failed to publish workflow:", err);
     } finally {
       setPublishing(false);
     }
+  };
+
+  const handleRestoreVersion = async (version: number) => {
+    setRestoringVersion(version);
+
+    try {
+      const res = await fetch(
+        `/api/admin/workflows/${workflowId}/versions/${version}/restore`,
+        {
+          method: "POST",
+        }
+      );
+
+      if (res.ok) {
+        await fetchSteps(); // Refresh steps after restore
+        setShowVersions(false);
+      }
+    } catch (err) {
+      console.error("Failed to restore version:", err);
+    } finally {
+      setRestoringVersion(null);
+    }
+  };
+
+  const formatDate = (timestamp: number) => {
+    return new Date(timestamp).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   };
 
   if (loading) {
@@ -118,6 +187,61 @@ export function WorkflowPipelineEditor({
               Published v{publishedVersion}
             </span>
           )}
+
+          {/* Version History Dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => setShowVersions(!showVersions)}
+              className="px-3 py-1.5 rounded-md text-xs font-medium bg-zinc-800 text-zinc-300 hover:bg-zinc-700 transition-colors border border-zinc-700"
+            >
+              Version History
+            </button>
+
+            {showVersions && (
+              <>
+                <div
+                  className="fixed inset-0 z-10"
+                  onClick={() => setShowVersions(false)}
+                />
+                <div className="absolute right-0 mt-2 w-80 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl z-20 max-h-96 overflow-y-auto">
+                  {versions.length === 0 ? (
+                    <div className="p-4 text-xs text-zinc-500 text-center">
+                      No versions published yet
+                    </div>
+                  ) : (
+                    <div className="p-2">
+                      {versions.map((version) => (
+                        <div
+                          key={version.id}
+                          className="flex items-center justify-between p-3 hover:bg-zinc-800 rounded-md transition-colors"
+                        >
+                          <div className="flex-1">
+                            <div className="text-sm font-medium text-zinc-200">
+                              Version {version.version}
+                            </div>
+                            <div className="text-xs text-zinc-500">
+                              {formatDate(version.created_at)}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => handleRestoreVersion(version.version)}
+                            disabled={restoringVersion === version.version}
+                            className="px-3 py-1 rounded text-xs font-medium bg-cyan-600 text-white hover:bg-cyan-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {restoringVersion === version.version
+                              ? "Restoring..."
+                              : "Restore"}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Publish Button */}
           <button
             onClick={handlePublish}
             disabled={publishing || steps.length === 0}
@@ -203,4 +327,6 @@ export function WorkflowPipelineEditor({
       </div>
     </div>
   );
-}
+});
+
+WorkflowPipelineEditor.displayName = "WorkflowPipelineEditor";
