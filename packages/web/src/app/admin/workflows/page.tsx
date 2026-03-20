@@ -21,7 +21,7 @@ export default function AdminWorkflowsPage() {
   const [selectedStepId, setSelectedStepId] = useState<string | null>(null);
   const [selectedStep, setSelectedStep] = useState<WorkflowStep | null>(null);
   const [loading, setLoading] = useState(true);
-  const editorRef = useRef<{ refreshSteps: () => void } | null>(null);
+  const editorRef = useRef<{ refreshSteps: () => void; refreshStepsKeepSelection: () => void } | null>(null);
 
   useEffect(() => {
     async function fetchWorkflows() {
@@ -78,9 +78,9 @@ export default function AdminWorkflowsPage() {
 
   const handleStepUpdate = (updatedStep: WorkflowStep) => {
     setSelectedStep(updatedStep);
-    // Trigger a refresh in the pipeline editor
+    // Refresh the pipeline node list without resetting selection
     if (editorRef.current) {
-      editorRef.current.refreshSteps();
+      editorRef.current.refreshStepsKeepSelection();
     }
   };
 

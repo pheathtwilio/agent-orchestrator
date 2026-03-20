@@ -22,7 +22,7 @@ interface WorkflowVersion {
 }
 
 export const WorkflowPipelineEditor = forwardRef<
-  { refreshSteps: () => void },
+  { refreshSteps: () => void; refreshStepsKeepSelection: () => void },
   WorkflowPipelineEditorProps
 >(({ workflowId, onStepSelect }, ref) => {
   const [steps, setSteps] = useState<WorkflowStep[]>([]);
@@ -83,9 +83,25 @@ export const WorkflowPipelineEditor = forwardRef<
     fetchVersions();
   }, [fetchSteps, fetchVersions]);
 
-  // Expose refresh method to parent
+  const refreshStepsKeepSelection = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/admin/workflows/${workflowId}/steps`);
+      if (res.ok) {
+        const data = await res.json();
+        const sortedSteps = (data.steps || []).sort(
+          (a: WorkflowStep, b: WorkflowStep) => a.sort_order - b.sort_order
+        );
+        setSteps(sortedSteps);
+      }
+    } catch (err) {
+      console.error("Failed to refresh steps:", err);
+    }
+  }, [workflowId]);
+
+  // Expose refresh methods to parent
   useImperativeHandle(ref, () => ({
     refreshSteps: fetchSteps,
+    refreshStepsKeepSelection,
   }));
 
   const handleStepClick = (stepId: string) => {
