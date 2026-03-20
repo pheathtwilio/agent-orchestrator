@@ -32,9 +32,11 @@ Three tables in `data/ao-workflows.db`:
 | id | TEXT PK | UUID |
 | workflow_id | TEXT FK | References `workflows.id` |
 | version | INTEGER | Auto-incrementing per workflow |
-| is_active | INTEGER | 0 or 1 — one active version per workflow |
+| is_active | INTEGER | 0 or 1 — enforced via `CREATE UNIQUE INDEX idx_one_active ON workflow_versions(workflow_id) WHERE is_active = 1` |
 | created_at | INTEGER | Timestamp |
 | snapshot | TEXT (JSON) | Full serialized step definitions — immutable record |
+
+Publishing a new version deactivates the old one and activates the new one in a single transaction.
 
 ### `workflow_steps`
 
@@ -80,8 +82,10 @@ Actions: `spawn_doctor`, `retry`, `fail_plan`, `skip`, `notify`.
 
 1. Admin edits steps in the UI (modifies `workflow_steps` — the draft)
 2. Admin clicks "Publish" — system serializes current steps into a JSON snapshot, creates a new `workflow_versions` row, marks it `is_active`
-3. On plan creation, the planner reads the active version's `snapshot` and stores it in the plan's Redis data
+3. On plan creation, the planner resolves the workflow: if the project has an assigned workflow, use it; otherwise use `"default-sdlc"`. It reads the active version's `snapshot` and stores it in the plan's Redis data along with `workflowId` and `workflowVersionId` for traceability.
 4. In-flight plans always reference their stored snapshot, never the live draft
+
+**Agent config precedence:** Step-level `agent_config` provides defaults. The planner's `PlannerConfig.modelPolicy` and `imageMap` can override these at the system level. Order: system config > step config > built-in defaults.
 
 ## Planner Refactor — Generic Step Runner
 
@@ -92,6 +96,8 @@ The plan object in Redis gains:
 ```typescript
 interface Plan {
   // ... existing fields ...
+  workflowId: string;                // which workflow this plan uses
+  workflowVersionId: string;         // which version was snapshotted
   workflowSnapshot: WorkflowStep[];  // from version snapshot at creation time
   currentStepIndex: number;          // which step we're on
 }
@@ -100,10 +106,21 @@ interface Plan {
 `PlanPhase` simplifies from `"planning" | "review" | "executing" | "testing" | "verifying" | "complete"` to:
 
 ```typescript
-type PlanPhase = "review" | "step_executing" | "complete" | "failed" | "cancelled";
+type PlanPhase = "planning" | "review" | "step_executing" | "complete" | "failed" | "cancelled";
 ```
 
-The dashboard displays the step name (e.g. "Integration Test") rather than a generic phase label.
+The `planning` phase is retained for the brief period during initial decomposition (before the plan enters review or execution). The dashboard displays the step name (e.g. "Integration Test") rather than a generic phase label.
+
+Each task node gains a `workflowStepIndex` field to associate it with the workflow step that spawned it:
+
+```typescript
+interface TaskNode {
+  // ... existing fields ...
+  workflowStepIndex: number;  // which workflow step this task belongs to
+}
+```
+
+This allows the step runner to filter tasks by step when evaluating exit criteria like `all_tasks_complete` — it only considers tasks where `workflowStepIndex === plan.currentStepIndex`.
 
 ### Step Runner Loop
 
@@ -133,7 +150,11 @@ async function evaluateStepCompletion(plan: Plan): Promise<void> {
   const step = plan.workflowSnapshot[plan.currentStepIndex];
   if (!step) return;
 
-  const met = checkExitCriteria(step.exit_criteria.programmatic, plan);
+  // Only evaluate tasks belonging to the current step
+  const stepTasks = plan.taskGraph.nodes.filter(
+    (n) => n.workflowStepIndex === plan.currentStepIndex
+  );
+  const met = checkExitCriteria(step.exit_criteria.programmatic, stepTasks);
   if (!met) return;
 
   const nextIndex = plan.currentStepIndex + 1;
@@ -142,7 +163,10 @@ async function evaluateStepCompletion(plan: Plan): Promise<void> {
     return;
   }
 
+  // Persist step advancement to Redis atomically before proceeding
   plan.currentStepIndex = nextIndex;
+  await taskStore.setPlanMetadata(plan.id, { currentStepIndex: nextIndex });
+
   const nextStep = plan.workflowSnapshot[nextIndex];
 
   if (nextStep.is_conditional && !evaluateCondition(nextStep.condition, plan)) {
@@ -153,6 +177,8 @@ async function evaluateStepCompletion(plan: Plan): Promise<void> {
   await beginStep(plan, nextStep);
 }
 ```
+
+Step advancement is persisted to Redis before spawning the next step's agents. If the process crashes between persistence and spawning, the watch loop restarts and picks up from the correct step index.
 
 ### Agent Spawning Per Step
 
@@ -194,6 +220,63 @@ When a task fails, the runner checks the current step's `failure_policy`:
 - `notify` — emit event but don't block
 
 Doctor-type reactive behavior is configurable per step. An explicit diagnostic step can also be added to the workflow sequence.
+
+### Message Handler Refactor
+
+The current `handleMessage()` (~600 lines) is a monolithic router with hardcoded task ID checks (`"integration-test"`, `"verify-build"`, `"doctor-*"`). This becomes a generic dispatcher that routes messages based on task-to-step associations.
+
+**Message type mapping:**
+
+| Message | Current behavior | New behavior |
+|---------|-----------------|-------------|
+| `TASK_COMPLETE` | Hardcoded checks for `integration-test`, `verify-build`, doctor tasks | Look up task's `workflowStepIndex`, evaluate that step's exit criteria. If doctor task, reset original task to pending. |
+| `TASK_FAILED` | Special cases for `integration-test`/`verify-build` (immediate plan fail) vs impl tasks (spawn doctor) | Look up the current step's `failure_policy` and execute it. No special-cased task IDs. |
+| `PROGRESS_UPDATE` | Stuck detection (>15min idle), tool/subprocess hung detection | Unchanged — step-agnostic, applies to any task regardless of step. |
+| `TEST_RESULT` | Per-task test pass/fail with task reset on failure | Preserved. Per-task testing is orthogonal to workflow steps — it's a within-step behavior. The `failure_policy` determines whether failed per-task tests trigger a doctor or retry. |
+| `FILE_LOCK_REQUEST` | Grant/deny file locks | Unchanged — step-agnostic. |
+
+**Doctor task association:** Doctor tasks spawned by a step's `spawn_doctor` failure policy inherit the same `workflowStepIndex` as the failed task. When a doctor task completes, the runner resets the original failed task to pending (same as current behavior), without checking hardcoded task ID prefixes.
+
+**Per-task testing:** The `createTestTrigger` mechanism is preserved within steps. It's a within-step behavior: when a task in step N completes, a per-task test may run before the step's exit criteria are evaluated. The step's `agent_config` can include a `per_task_testing: boolean` flag to enable/disable this per step. The default workflow's implementation step has it enabled.
+
+### Conditional Step Schema
+
+The `condition` field uses a structured schema, not free-text:
+
+```json
+{
+  "type": "previous_step_had_failures",
+}
+```
+
+Supported condition types:
+- `previous_step_had_failures` — true if any task in the previous step failed (even if retried successfully)
+- `previous_step_all_passed` — true if previous step completed with no failures at all
+- `step_result_contains` — `{ "type": "step_result_contains", "stepIndex": 0, "match": "merge conflict" }` — substring match on any task result summary in the referenced step
+- `always` — always true (useful for debugging)
+- `never` — always false (useful for disabling a step without deleting it)
+
+### Resume and Retry Refactor
+
+The current `resumePlan()` resets failed tasks and removes hardcoded `integration-test`/`verify-build` nodes by ID. With generic steps:
+
+- `resumePlan()` identifies the failing step via `currentStepIndex`, resets failed tasks in that step to pending, and removes any doctor tasks for that step. It does not reference task IDs by name.
+- `retryPlan()` resets `currentStepIndex` to 0, resets all tasks to pending, and removes tasks from steps > 0 (since they'll be re-created when those steps begin).
+- Both functions read the `workflowSnapshot` from the plan's Redis data to understand step boundaries.
+
+### Event Type Refactor
+
+The current `PlannerEventType` includes hardcoded event names like `testing_started`, `verify_complete`. These become generic:
+
+- `step_started` — includes `stepIndex` and `stepName`
+- `step_complete` — includes `stepIndex` and `stepName`
+- `step_failed` — includes `stepIndex`, `stepName`, and failure details
+
+The dashboard subscribes to these generic events and renders the step name from the workflow snapshot.
+
+### Monitor Updates
+
+The `monitor()` function currently checks `plan.phase !== "executing" && plan.phase !== "testing" && plan.phase !== "verifying"`. This simplifies to `plan.phase !== "step_executing"` since all active steps use the same phase.
 
 ### What Gets Removed From planner.ts
 
@@ -312,7 +395,7 @@ Plan detail view shows:
 | POST | `/api/admin/workflows/:id/steps` | Add a new step |
 | PUT | `/api/admin/workflows/:id/steps/:stepId` | Update a step |
 | DELETE | `/api/admin/workflows/:id/steps/:stepId` | Remove a step |
-| PUT | `/api/admin/workflows/:id/steps/reorder` | Reorder steps (array of step IDs) |
+| POST | `/api/admin/workflows/:id/steps/reorder` | Reorder steps (array of step IDs) |
 
 ### Versioning — `/api/admin/workflows/:id/versions`
 
