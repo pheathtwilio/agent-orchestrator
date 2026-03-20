@@ -52,3 +52,21 @@ export type {
   TaskSummary,
   GenerateSummaryInput,
 } from "./plan-summary.js";
+export { checkExitCriteria } from "./step-exit-criteria.js";
+export { handleStepFailure } from "./step-failure-handler.js";
+export type {
+  SpawnParams as FailureHandlerSpawnParams,
+  FailureHandlerCallbacks,
+} from "./step-failure-handler.js";
+export {
+  evaluateStepCompletion,
+  beginStep,
+  evaluateCondition,
+  gatherPriorStepContext,
+} from "./step-runner.js";
+export type {
+  SpawnParams as StepRunnerSpawnParams,
+  StepContext,
+  StepCondition,
+  StepRunnerCallbacks,
+} from "./step-runner.js";
