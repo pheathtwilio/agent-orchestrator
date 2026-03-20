@@ -13,22 +13,23 @@ Decompose features into parallel tasks, spawn specialized AI coding agents in Do
 
 </div>
 
+> **Fork note:** This is a fork of [ComposioHQ/agent-orchestrator](https://github.com/ComposioHQ/agent-orchestrator) with significant additions including configurable workflows, a brainstorm chat UI, a doctor agent, and a full web dashboard for plan management.
+
 ---
 
 ## Overview
 
 Agent Orchestrator manages fleets of AI coding agents running in isolated Docker containers. A **planner** decomposes a feature description into a task graph, assigns each task to a skill-specific agent (frontend, backend, security, etc.), and coordinates execution via a Redis message bus. When all tasks complete, the orchestrator merges branches and opens a consolidated PR.
 
-**What's new in this release:**
+### Fork-specific features
 
-- Docker-first runtime — each agent runs in its own container with isolated workspace
-- Skill-based agent routing with purpose-built Docker images per skill
-- Redis message bus for real-time agent-to-orchestrator communication
-- `ao plan` command suite for multi-step feature orchestration
-- Agent sidecar for heartbeats, inbox watching, and completion reporting
-- Monitor loop for stuck/dead agent detection and recovery
-- Security trigger with webhook integration
-- Branch merge orchestration with consolidated PR creation
+- **Configurable Workflows** — visual pipeline builder to define custom SDLC workflows with per-step exit criteria, failure policies, and agent configuration. Replaces the hardcoded implementation → testing → verify pipeline.
+- **Brainstorm Chat** — interactive chat modal powered by Claude for exploring and refining feature ideas before plan creation.
+- **Doctor Agent** — auto-diagnoses and fixes stuck or failed tasks by inspecting errors, logs, and test output.
+- **Web Dashboard** — full plan management UI with real-time SSE swim lanes, live agent output, cancel/retry, archive, and workflow admin.
+- **Plan Resume** — re-run only failed tasks while preserving completed work.
+- **Auto-merge** — automatically merges PRs and cleans up resources after the verify-build phase completes.
+- **Token Usage Tracking** — tracks and displays token consumption across agents via sidecar telemetry.
 
 ---
 
@@ -38,25 +39,31 @@ Agent Orchestrator manages fleets of AI coding agents running in isolated Docker
 ao plan create "Add user authentication with OAuth2"
 ```
 
-1. **Planner** calls Claude Opus to decompose the feature into a task graph
+1. **Planner** calls Claude to decompose the feature into a task graph
 2. **Skill classifier** assigns each task a role (`frontend`, `backend`, `testing`, `security`, etc.) and model tier
-3. **Docker runtime** spawns one container per task, each with its own git worktree and feature branch
-4. **Agent sidecar** inside each container manages Redis heartbeats, prompt injection, and completion reporting
-5. **Watch loop** monitors progress, detects stuck agents, and triggers per-task test agents
-6. **Merge orchestrator** consolidates completed branches and opens a single integration PR
-7. **Security trigger** optionally runs a security audit agent after implementation
+3. **Workflow engine** determines the execution pipeline — either the default SDLC steps or a custom workflow configured via the admin UI
+4. **Docker runtime** spawns one container per task, each with its own git worktree and feature branch
+5. **Agent sidecar** inside each container manages Redis heartbeats, prompt injection, and completion reporting
+6. **Step runner** evaluates exit criteria after each task, advances to the next workflow step, and handles failures per step policy
+7. **Merge orchestrator** consolidates completed branches and opens a single integration PR
+8. **Security trigger** optionally runs a security audit agent after implementation
 
 ### Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │  CLI (ao plan create / watch / cancel / audit)          │
+│  Web UI (ao ui → http://localhost:3000)                 │
 └────────────────────────┬────────────────────────────────┘
                          │
               ┌──────────▼──────────┐
-              │   Planner (Opus)    │  Decomposes feature → TaskGraph
+              │   Planner (Claude)  │  Decomposes feature → TaskGraph
               └──────────┬──────────┘
-                         │  plan.json persisted to ~/.agent-orchestrator/
+                         │  Workflow snapshot + plan persisted to Redis
+              ┌──────────▼──────────┐
+              │   Step Runner       │  Drives workflow steps with exit criteria
+              └──────────┬──────────┘
+                         │
               ┌──────────▼──────────┐
               │   Message Bus       │  Redis Streams + pub/sub
               └──────────┬──────────┘
@@ -171,6 +178,34 @@ export AWS_REGION=us-west-2
 
 ---
 
+## Web Dashboard (`ao ui`)
+
+Launch the dashboard and Redis with a single command:
+
+```bash
+ao ui
+```
+
+Opens `http://localhost:3000` with:
+
+- **Plan Dashboard** — real-time swim lane view of all plans with SSE-powered status updates, live agent output, cancel/retry/archive controls
+- **Brainstorm Chat** — interactive Claude-powered chat for refining feature ideas before creating a plan
+- **Workflow Admin** (`/admin/workflows`) — visual pipeline builder for configuring workflow steps, exit criteria, failure policies, and agent settings
+- **Pull Requests** — sidebar showing open PRs from agent work
+
+### Workflow Admin
+
+Navigate to the Workflows page from the plan dashboard header. The admin UI provides:
+
+- **Pipeline canvas** — visual node-and-arrow view of workflow steps
+- **Step editing** — click any step to configure name, description, exit criteria, failure policy, agent skill/model, and conditional execution
+- **Reorder** — move steps left/right with arrow controls
+- **Add/delete steps** — add new steps with defaults or remove existing ones
+- **Publish/version** — publish the current draft as an immutable version; restore previous versions from history
+- **Workflow snapshots** — plans capture the active workflow version at creation time, so in-flight plans are immune to edits
+
+---
+
 ## Multi-Agent Planning (`ao plan`)
 
 The `ao plan` command suite orchestrates multi-step feature implementation across specialized agents.
@@ -206,6 +241,8 @@ ao plan create "..." --yes    # Skip approval prompt
 
 Or approve interactively when prompted. Agents spawn in parallel respecting task dependencies.
 
+Plans can also be created from the web dashboard via the brainstorm chat, which lets you refine the feature description with Claude before generating the task graph.
+
 ### Watch progress
 
 ```bash
@@ -213,6 +250,14 @@ ao plan watch plan-a1b2c3
 ```
 
 Streams live status updates, agent output, and phase transitions. Press `Ctrl+C` to detach (agents keep running).
+
+### Resume failed plans
+
+```bash
+ao plan resume plan-a1b2c3
+```
+
+Re-runs only failed tasks while preserving completed work. Useful for recovering from transient failures.
 
 ### Cancel a plan
 
@@ -238,6 +283,33 @@ ao plan create "Update docs" --no-test
 
 Skips the integration test phase (useful for docs-only or config changes).
 
+### Cleanup
+
+```bash
+ao plan cleanup plan-a1b2c3
+```
+
+Removes containers, worktrees, and branches associated with a completed or cancelled plan.
+
+---
+
+## Configurable Workflows
+
+By default, plans execute a three-step SDLC workflow: **Implementation → Integration Test → Verify Build**. The workflow engine lets you customize this pipeline.
+
+### Key concepts
+
+- **Workflow steps** define what each phase does via plain English duties and structured configuration
+- **Exit criteria** determine when a step is complete — programmatic conditions (`all_tasks_complete`, `tests_pass`, `no_failures`, `pr_created`) are evaluated automatically
+- **Failure policies** control what happens when a task fails — `spawn_doctor`, `retry`, `fail_plan`, `skip`, or `notify`
+- **Agent config** specifies the skill, model tier, and Docker image for agents in each step
+- **Conditional steps** can be skipped based on the outcome of previous steps
+- **Versioning** — workflows use a draft/publish model. Edits happen on the draft; publishing creates an immutable snapshot. Plans reference the snapshot, so in-flight plans are never affected by workflow changes.
+
+### Storage
+
+Workflow definitions are stored in a local SQLite database (`data/ao-workflows.db`) with WAL mode. The default SDLC workflow is seeded automatically on first run.
+
 ---
 
 ## Skill System
@@ -253,6 +325,7 @@ Each task is assigned a skill that determines its Docker image, `CLAUDE.md` inst
 | devops     | `ao-agent:latest`     | Node.js, AWS CLI, git, gh CLI  |
 | database   | `ao-agent:latest`     | Node.js, git, gh CLI           |
 | security   | `ao-agent-security`   | + snyk, semgrep, python3       |
+| doctor     | `ao-agent:latest`     | Node.js, git, gh CLI           |
 
 Skill instructions live in `docker/skills/<skill>/CLAUDE.md` and are appended to the base agent rules at image build time.
 
@@ -265,8 +338,9 @@ Every Docker agent container runs a lightweight **sidecar** (`docker/scripts/sid
 - Publishes **heartbeats** to Redis every 15 seconds so the monitor knows the agent is alive
 - Watches `/tmp/ao-inbox` for orchestrator messages (e.g. `ABORT`)
 - Injects the task prompt via Claude's `-p` flag for one-shot execution
-- Streams agent output to Redis pub/sub for real-time display in `ao plan watch`
+- Streams agent output to Redis pub/sub for real-time display in `ao plan watch` and the web dashboard
 - Reports `TASK_COMPLETE` or `TASK_FAILED` to the orchestrator when the agent exits, including branch name and recent commits
+- Tracks **token usage** and reports it back for cost monitoring
 
 ---
 
@@ -277,6 +351,7 @@ The watch loop runs a **monitor** that checks for stuck or dead agents:
 - An agent is **stuck** if it stops sending heartbeats for > 5 minutes
 - An agent is **dead** if its container has exited unexpectedly
 - Stuck agents receive a nudge message; dead agents are marked `failed`
+- The **doctor agent** can be automatically spawned to diagnose and fix failures (configurable via workflow step failure policies)
 
 ---
 
@@ -299,11 +374,16 @@ ao dashboard               # Open web dashboard at http://localhost:3000
 ## CLI Reference
 
 ```bash
+# Web dashboard
+ao ui                             # Start Redis + web dashboard
+
 # Plan orchestration
 ao plan create "<feature>"  [--yes] [--no-test]
 ao plan watch <plan-id>
+ao plan resume <plan-id>
 ao plan cancel <plan-id>
 ao plan audit <plan-id>
+ao plan cleanup <plan-id>
 
 # Single-agent sessions
 ao spawn <project> [issue]
@@ -373,12 +453,12 @@ pnpm dev                       # Start web dashboard dev server
 
 ```
 packages/
-  cli/          — ao CLI commands including ao plan
+  cli/          — ao CLI commands including ao plan, ao ui
   core/         — shared types, config loader, plugin interfaces
-  planner/      — feature decomposition, task graph, monitor, merge orchestrator
+  planner/      — feature decomposition, task graph, step runner, monitor, merge orchestrator
   message-bus/  — Redis Streams wrapper, task store, file locks
   plugins/      — runtime, agent, workspace, tracker, notifier plugins
-  web/          — dashboard web app
+  web/          — dashboard web app (Next.js) with workflow admin
   integration-tests/ — end-to-end tests
 docker/
   Dockerfile.agent    — base agent image
@@ -390,6 +470,10 @@ docker/
     sidecar.mjs       — agent sidecar (heartbeats, inbox, completion)
   skills/             — per-skill CLAUDE.md instruction files
   config/             — Claude Code settings for containers
+data/                 — SQLite databases (auto-created, gitignored)
+docs/
+  specs/              — design specifications
+  plans/              — implementation plans
 ```
 
 See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for code conventions and architecture details.
