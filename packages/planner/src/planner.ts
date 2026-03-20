@@ -92,6 +92,9 @@ export interface Planner {
   /** Resume a plan — reset failed tasks to pending and spawn ready ones */
   resumePlan(planId: string): Promise<{ resumed: string[] }>;
 
+  /** Trigger finalization for a plan where all tasks are complete but pipeline hasn't finished */
+  triggerFinalize?(planId: string): Promise<void>;
+
   /** Shutdown */
   shutdown(): Promise<void>;
 }
@@ -915,8 +918,16 @@ export function createPlanner(
       const hasFailed = graph.nodes.some((n) => n.status === "failed");
       const allTerminal = graph.nodes.every((n) => n.status === "complete" || n.status === "failed");
       const allPending = graph.nodes.every((n) => n.status === "pending");
+      // Check if the plan completed all tasks but still needs finalization
+      // (integration-test → verify-build → merge). A truly complete plan has
+      // a verify-build node that's complete, or uses workflow steps.
+      const hasVerifyBuild = graph.nodes.some((n) => n.id === "verify-build");
+      const hasWorkflow = !!graph.workflowId;
+      const needsFinalize = allComplete && !hasVerifyBuild && !hasWorkflow;
+
       let phase: PlanPhase;
-      if (allComplete) phase = "complete";
+      if (allComplete && !needsFinalize) phase = "complete";
+      else if (needsFinalize) phase = "executing"; // still needs verify-build
       else if (allPending) phase = "review"; // fresh or fully-reset plan
       else if (hasInProgress) phase = "executing";
       else if (hasPending && !allTerminal) phase = "executing";
@@ -1935,6 +1946,23 @@ export function createPlanner(
       });
 
       return { killed };
+    },
+
+    async triggerFinalize(planId: string): Promise<void> {
+      const plan = plans.get(planId);
+      if (!plan) return;
+
+      const allComplete = plan.taskGraph.nodes.every((n) => n.status === "complete");
+      if (!allComplete) return;
+
+      if (plan.workflowSnapshot) {
+        // Workflow plan — evaluate step completion to advance
+        await evaluateStepCompletion(plan, buildStepRunnerCallbacks());
+      } else {
+        // Legacy plan — run finalize (integration-test → verify-build)
+        plan.phase = "executing";
+        await finalizePlan(plan);
+      }
     },
 
     async shutdown(): Promise<void> {

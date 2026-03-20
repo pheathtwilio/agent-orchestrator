@@ -429,7 +429,18 @@ export async function restartAllWatchers(
         ["complete", "failed"].includes(n.status),
       );
 
-      if (allTerminal || !hasActive) {
+      // Check if the plan completed all tasks but never ran verify-build
+      // (e.g. watcher died before the finalize phase). These need a watcher
+      // to drive the remaining pipeline (integration-test → verify-build → merge).
+      const allComplete = graph.nodes.every((n) => n.status === "complete");
+      const hasVerifyBuild = graph.nodes.some((n) => n.id === "verify-build");
+      const needsFinalize = allComplete && !hasVerifyBuild;
+
+      // For workflow plans, check if all steps have been executed
+      const hasWorkflow = !!(graph as any).workflowSnapshot;
+      const needsStepAdvance = allComplete && hasWorkflow;
+
+      if ((allTerminal || !hasActive) && !needsFinalize && !needsStepAdvance) {
         skipped.push(graph.id);
         continue;
       }
@@ -465,6 +476,9 @@ export async function restartAllWatchers(
           killSession: async (sessionId) => {
             await sessionManager.kill(sessionId);
           },
+          destroyContainer: async (sessionId) => {
+            await execShell("docker", ["rm", "-f", `ao-${sessionId}`], undefined);
+          },
           mergePlanPRs,
         },
         {
@@ -479,10 +493,17 @@ export async function restartAllWatchers(
       });
 
       // Load existing plan state (reconstructs phase, assignments, etc.)
-      await planner.loadPlan(graph.id, projectId);
+      const plan = await planner.loadPlan(graph.id, projectId);
 
       // Start fresh watch loop with new planner instance
       startWatchLoop(graph.id, planner, messageBus, freshTaskStore);
+
+      // If all tasks are complete but the plan needs finalization,
+      // trigger it now (the watcher alone won't because no new messages arrive)
+      if (needsFinalize || needsStepAdvance) {
+        planner.triggerFinalize?.(graph.id);
+      }
+
       restarted.push(graph.id);
     }
   } finally {
