@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createTaskStore, createEngineStore } from "@composio/ao-message-bus";
 import { getPlanState } from "@/lib/engine-bridge";
+import { extractTitle } from "@/lib/extract-title";
 
 export const dynamic = "force-dynamic";
 
@@ -79,7 +80,7 @@ export async function GET(request: Request): Promise<Response> {
         plans.push({
           id: planId,
           featureId: planId,
-          title: planData.featureDescription,
+          title: extractTitle(planData.featureDescription),
           taskCount: total,
           complete,
           inProgress,

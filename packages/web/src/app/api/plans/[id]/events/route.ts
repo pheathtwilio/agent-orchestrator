@@ -6,6 +6,7 @@ import {
   type TaskGraph,
 } from "@composio/ao-message-bus";
 import { getPlanState } from "@/lib/engine-bridge";
+import { extractTitle } from "@/lib/extract-title";
 
 export const dynamic = "force-dynamic";
 
@@ -52,7 +53,7 @@ async function resolveGraph(
   return {
     id: planId,
     featureId: planId,
-    title: planData.featureDescription,
+    title: extractTitle(planData.featureDescription),
     nodes,
     createdAt: planData.createdAt,
     updatedAt: planData.updatedAt,
