@@ -138,7 +138,8 @@ export class WorkflowEngine {
 
     const resumed: string[] = [];
     for (const [taskId, task] of state.tasks) {
-      if (task.status === "failed") {
+      // Reset any non-complete task (failed, spawning, running, pending)
+      if (task.status !== "complete") {
         task.status = "pending";
         task.error = null;
         task.containerId = null;
@@ -149,8 +150,8 @@ export class WorkflowEngine {
 
     if (resumed.length === 0) return { resumed };
 
-    // Reset phase to executing so the engine can re-process
-    state.phase = "executing";
+    // Set phase to reviewing so PLAN_APPROVED can transition to executing
+    state.phase = "reviewing";
     state.updatedAt = Date.now();
 
     // Re-approve to trigger spawning of ready tasks

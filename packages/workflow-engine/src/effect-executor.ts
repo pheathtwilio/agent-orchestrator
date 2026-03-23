@@ -63,9 +63,11 @@ export class EffectExecutor {
 
   private async handleSpawn(effect: Extract<Effect, { type: "SPAWN_CONTAINER" }>): Promise<void> {
     try {
+      console.log(`[effect] Spawning container ${effect.config.containerName} for ${effect.planId}/${effect.taskId}`);
       await this.deps.spawner.spawn(effect.config);
       await this.deps.store.registerContainer(effect.config.containerName, effect.planId, effect.taskId);
     } catch (err) {
+      console.error(`[effect] Spawn failed for ${effect.config.containerName}:`, err instanceof Error ? err.message : String(err));
       this.deps.feedEvent({
         type: "SPAWN_FAILED",
         planId: effect.planId,
@@ -127,7 +129,8 @@ export class EffectExecutor {
         } catch { /* cleanup is best-effort */ }
       }
     }
-    await this.deps.store.deactivatePlan(effect.planId);
+    // Don't deactivate — keep plan in the active set so it stays visible
+    // in the UI. The phase field (completed/failed/cancelled) indicates status.
     this.deps.feedEvent({ type: "CLEANUP_DONE", planId: effect.planId });
   }
 

@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { resumePlan, getPlanState } from "@/lib/engine-bridge";
 import { createEngineStore } from "@composio/ao-message-bus";
 import { getServices } from "@/lib/services";
 
@@ -11,9 +10,8 @@ const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379";
  * POST /api/plans/:id/resume — resume a plan by re-running only failed tasks.
  * Preserves completed tasks and their results.
  *
- * If the plan is in engine memory, delegates to the engine's resumePlan.
- * If the plan is orphaned (in Redis but not memory), cancels and re-creates it
- * so the engine picks it up fresh.
+ * Re-creates the plan from scratch via engine.createPlan(), which starts
+ * the planner again. Works for stalled, cancelled, and orphaned plans.
  */
 export async function POST(
   _request: Request,
@@ -23,14 +21,6 @@ export async function POST(
 
   try {
     const { engine } = await getServices();
-
-    // Plan is in engine memory — use the state machine
-    if (getPlanState(planId)) {
-      const result = await resumePlan(planId);
-      return NextResponse.json({ planId, ...result });
-    }
-
-    // Orphaned engine plan — re-create it so the engine picks it up
     if (!engine) {
       return NextResponse.json(
         { error: "WorkflowEngine not available" },
@@ -38,6 +28,7 @@ export async function POST(
       );
     }
 
+    // Read plan data from Redis (may or may not be in engine memory)
     const engineStore = createEngineStore(REDIS_URL);
     try {
       const planData = await engineStore.getPlan(planId);
@@ -45,10 +36,8 @@ export async function POST(
         return NextResponse.json({ error: "Plan not found" }, { status: 404 });
       }
 
-      // Clean up the old plan from the active set
-      await engineStore.deactivatePlan(planId);
-
-      // Parse workflow snapshot
+      // Re-create the plan from scratch — this handles all cases:
+      // stalled planning, cancelled, failed, or orphaned plans
       let workflowSnapshot: unknown[] = [];
       try {
         workflowSnapshot = planData.workflowSnapshot
@@ -56,7 +45,6 @@ export async function POST(
           : [];
       } catch { /* use empty */ }
 
-      // Re-create via the engine so it gets proper in-memory state
       await engine.createPlan({
         planId,
         projectId: planData.projectId,
@@ -66,7 +54,14 @@ export async function POST(
         workflowSnapshot,
       });
 
-      return NextResponse.json({ planId, resumed: ["re-created from Redis"] });
+      // Safety net: ensure plan is in the active set
+      const active = await engineStore.getActivePlanIds();
+      if (!active.includes(planId)) {
+        const fresh = await engineStore.getPlan(planId);
+        if (fresh) await engineStore.createPlan(planId, fresh);
+      }
+
+      return NextResponse.json({ planId, resumed: ["re-created"] });
     } finally {
       await engineStore.disconnect();
     }

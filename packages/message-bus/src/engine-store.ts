@@ -7,13 +7,20 @@ const DEFAULT_REDIS_URL = "redis://localhost:6379";
 export function createEngineStore(redisUrl?: string): EngineStore {
   const url = redisUrl ?? process.env.REDIS_URL ?? DEFAULT_REDIS_URL;
   const redis = new Redis(url, { maxRetriesPerRequest: 3, lazyConnect: true });
-  let connected = false;
 
   async function ensureConnected(): Promise<void> {
-    if (!connected) {
-      await redis.connect();
-      connected = true;
+    const status = redis.status;
+    if (status === "ready") return;
+    if (status === "connecting" || status === "reconnecting") {
+      // Wait for reconnection to settle
+      await new Promise<void>((resolve, reject) => {
+        redis.once("ready", resolve);
+        redis.once("error", reject);
+      });
+      return;
     }
+    // "wait", "close", "end" — need to (re)connect
+    await redis.connect();
   }
 
   return {
@@ -127,7 +134,6 @@ export function createEngineStore(redisUrl?: string): EngineStore {
     },
 
     async disconnect() {
-      connected = false;
       await redis.quit().catch(() => redis.disconnect());
     },
   };

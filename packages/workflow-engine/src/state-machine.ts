@@ -374,7 +374,7 @@ export function transition(
 
       // Spawn ready tasks for step 0
       const ready = readyTasksForStep(nextState, 0);
-      const effects = spawnEffectsForTasks(nextState, ready);
+      const spawnEffects = spawnEffectsForTasks(nextState, ready);
 
       // Mark spawned tasks as spawning
       for (const task of ready) {
@@ -382,6 +382,11 @@ export function transition(
         t.status = "spawning";
         nextState.tasks.set(task.id, t);
       }
+
+      const effects: Effect[] = [
+        { type: "UPDATE_PLAN", planId: event.planId, phase: "executing" },
+        ...spawnEffects,
+      ];
 
       return { nextState, effects };
     }
