@@ -224,6 +224,11 @@ export function PlansDashboard() {
     fetchPlans();
   }
 
+  async function approvePlan(planId: string) {
+    await fetch(`/api/plans/${planId}/approve`, { method: "POST" });
+    fetchPlans();
+  }
+
   // Derive plan detail from SSE snapshot
   const planDetail = snapshot
     ? {
@@ -590,6 +595,11 @@ export function PlansDashboard() {
                     {" \u00b7 "}
                     Updated <TimeAgo timestamp={planDetail.updatedAt} />
                   </p>
+                  {snapshot?.plan.enginePhase && (
+                    <p className="text-[10px] text-zinc-500 mt-1">
+                      Engine: <span className="text-zinc-400 font-medium">{snapshot.plan.enginePhase}</span>
+                    </p>
+                  )}
                   {snapshot?.plan.workflowSnapshot && snapshot.plan.currentStepIndex !== undefined && (
                     <div className="mt-2">
                       <WorkflowStepProgress
@@ -603,12 +613,22 @@ export function PlansDashboard() {
                   {snapshot && <UsageBanner usage={snapshot.usage} />}
                   {/* Plan actions */}
                   {!isTerminal ? (
-                    <button
-                      onClick={() => cancelPlan(planDetail.id)}
-                      className="px-2.5 py-1 rounded text-[10px] font-medium text-red-400 border border-red-800/50 hover:bg-red-900/30 transition-colors"
-                    >
-                      Cancel
-                    </button>
+                    <div className="flex gap-2">
+                      {snapshot?.plan.enginePhase === "reviewing" && (
+                        <button
+                          onClick={() => approvePlan(planDetail.id)}
+                          className="px-2.5 py-1 rounded text-[10px] font-medium text-green-400 border border-green-800/50 hover:bg-green-900/30 transition-colors"
+                        >
+                          Approve Plan
+                        </button>
+                      )}
+                      <button
+                        onClick={() => cancelPlan(planDetail.id)}
+                        className="px-2.5 py-1 rounded text-[10px] font-medium text-red-400 border border-red-800/50 hover:bg-red-900/30 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
                   ) : (
                     <div className="flex gap-2">
                       {canResume && (
