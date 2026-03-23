@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createTaskStore } from "@composio/ao-message-bus";
 import { stopPlanWatcher } from "@/lib/plan-executor";
+import { isEngineActive, cancelPlan as engineCancelPlan } from "@/lib/engine-bridge";
 import { getServices } from "@/lib/services";
 
 export const dynamic = "force-dynamic";
@@ -18,44 +19,57 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
   const { id: planId } = await params;
-  const taskStore = createTaskStore(REDIS_URL);
 
   try {
-    // Stop the background watcher if running
-    stopPlanWatcher(planId);
-
-    const graph = await taskStore.getGraph(planId);
-    if (!graph) {
-      return NextResponse.json({ error: "Plan not found" }, { status: 404 });
+    // Feature flag: route through WorkflowEngine when active
+    if (isEngineActive()) {
+      await engineCancelPlan(planId);
+      return NextResponse.json({ planId, cancelled: true, engine: true });
     }
 
-    const { sessionManager } = await getServices();
-    const killed: string[] = [];
+    // Legacy path: plan-executor
+    const taskStore = createTaskStore(REDIS_URL);
 
-    // Kill active agent containers and mark non-terminal tasks as failed
-    let cancelled = 0;
-    for (const node of graph.nodes) {
-      if (!["complete", "failed"].includes(node.status)) {
-        // Kill the container if the task has an assigned agent
-        if (node.assignedTo) {
-          try {
-            await sessionManager.kill(node.assignedTo);
-            killed.push(node.assignedTo);
-          } catch {
-            // Container may already be gone
-          }
-        }
+    try {
+      // Stop the background watcher if running
+      stopPlanWatcher(planId);
 
-        await taskStore.updateTask(planId, node.id, {
-          status: "failed",
-          assignedTo: null,
-        });
-        cancelled++;
+      const graph = await taskStore.getGraph(planId);
+      if (!graph) {
+        return NextResponse.json({ error: "Plan not found" }, { status: 404 });
       }
-    }
 
-    return NextResponse.json({ planId, cancelled, killed });
-  } finally {
-    await taskStore.disconnect();
+      const { sessionManager } = await getServices();
+      const killed: string[] = [];
+
+      // Kill active agent containers and mark non-terminal tasks as failed
+      let cancelled = 0;
+      for (const node of graph.nodes) {
+        if (!["complete", "failed"].includes(node.status)) {
+          // Kill the container if the task has an assigned agent
+          if (node.assignedTo) {
+            try {
+              await sessionManager.kill(node.assignedTo);
+              killed.push(node.assignedTo);
+            } catch {
+              // Container may already be gone
+            }
+          }
+
+          await taskStore.updateTask(planId, node.id, {
+            status: "failed",
+            assignedTo: null,
+          });
+          cancelled++;
+        }
+      }
+
+      return NextResponse.json({ planId, cancelled, killed });
+    } finally {
+      await taskStore.disconnect();
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

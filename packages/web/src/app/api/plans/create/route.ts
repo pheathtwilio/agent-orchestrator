@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
+import { randomUUID } from "node:crypto";
 import { createAndExecutePlan } from "@/lib/plan-executor";
+import { isEngineActive, createPlan as engineCreatePlan } from "@/lib/engine-bridge";
 import { getActiveSnapshot } from "@/lib/workflow-store";
+import { DEFAULT_WORKFLOW } from "@composio/ao-workflow-engine";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +12,9 @@ export const dynamic = "force-dynamic";
  *
  * Decomposes the feature description into tasks, spawns agents,
  * and starts a background watch loop that drives the plan to completion.
+ *
+ * When AO_USE_WORKFLOW_ENGINE=true, routes through the new WorkflowEngine
+ * instead of the legacy plan-executor.
  *
  * Body:
  *   - project: string (project ID from config)
@@ -41,6 +47,28 @@ export async function POST(request: Request): Promise<Response> {
     // Resolve the active workflow for plan creation
     const workflowData = getActiveSnapshot("default-sdlc");
 
+    // Feature flag: route through WorkflowEngine when active
+    if (isEngineActive()) {
+      const planId = `plan-${randomUUID().slice(0, 8)}`;
+
+      await engineCreatePlan({
+        planId,
+        projectId: project,
+        featureDescription: description,
+        workflowId: workflowData ? "default-sdlc" : "default",
+        workflowVersionId: workflowData?.versionId ?? "built-in",
+        workflowSnapshot: workflowData?.steps ?? DEFAULT_WORKFLOW,
+      });
+
+      return NextResponse.json({
+        planId,
+        title: description,
+        taskCount: 0, // Planner will decompose asynchronously
+        engine: true,
+      });
+    }
+
+    // Legacy path: plan-executor
     const result = await createAndExecutePlan({
       project,
       description,

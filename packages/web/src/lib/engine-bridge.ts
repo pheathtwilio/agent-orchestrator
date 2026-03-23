@@ -11,6 +11,11 @@ function getEngine(): WorkflowEngine {
   return engineInstance;
 }
 
+/** Returns true if the workflow engine is initialized and active. */
+export function isEngineActive(): boolean {
+  return engineInstance !== null;
+}
+
 export async function createPlan(params: {
   planId: string;
   projectId: string;
