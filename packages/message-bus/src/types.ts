@@ -84,6 +84,30 @@ export interface MessageBus {
   /** Unsubscribe from agent output */
   unsubscribeOutput(sessionId: string): Promise<void>;
 
+  /** Subscribe using Redis consumer groups (XREADGROUP).
+   *  Messages must be explicitly acknowledged via ack().
+   *  handler receives (message, streamId) — streamId is needed for ack. */
+  subscribeGroup(
+    stream: string,
+    group: string,
+    consumer: string,
+    handler: (message: BusMessage, streamId: string) => Promise<void>,
+  ): Promise<void>;
+
+  /** Acknowledge a message in a consumer group */
+  ack(stream: string, group: string, streamId: string): Promise<void>;
+
+  /** Claim pending messages from crashed consumers (XAUTOCLAIM) */
+  autoClaim(
+    stream: string,
+    group: string,
+    consumer: string,
+    minIdleMs: number,
+  ): Promise<Array<{ message: BusMessage; streamId: string }>>;
+
+  /** Create a consumer group (idempotent — ignores BUSYGROUP error) */
+  createGroup(stream: string, group: string, startId?: string): Promise<void>;
+
   /** Graceful shutdown */
   disconnect(): Promise<void>;
 }

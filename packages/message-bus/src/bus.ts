@@ -185,6 +185,75 @@ export function createMessageBus(redisUrl?: string): MessageBus {
       }
     },
 
+    async subscribeGroup(stream, group, consumer, handler) {
+      await ensureConnected();
+      const entry = { polling: true };
+      subscriptions.set(`group:${stream}:${group}:${consumer}`, entry);
+
+      (async () => {
+        while (entry.polling) {
+          try {
+            const results = await sub.xreadgroup(
+              "GROUP", group, consumer,
+              "COUNT", "10",
+              "BLOCK", "5000",
+              "STREAMS", stream, ">",
+            );
+
+            if (!results) continue;
+
+            for (const [, messages] of results) {
+              for (const [streamId, fields] of messages) {
+                const obj: Record<string, string> = {};
+                for (let i = 0; i < fields.length; i += 2) {
+                  obj[fields[i]] = fields[i + 1];
+                }
+                try {
+                  await handler(deserializeMessage(obj), streamId);
+                } catch {
+                  // Handler error — message stays pending for reclaim
+                }
+              }
+            }
+          } catch {
+            if (entry.polling) {
+              await new Promise((r) => setTimeout(r, 1000));
+            }
+          }
+        }
+      })();
+    },
+
+    async ack(stream, group, streamId) {
+      await ensureConnected();
+      await pub.xack(stream, group, streamId);
+    },
+
+    async autoClaim(stream, group, consumer, minIdleMs) {
+      await ensureConnected();
+      const results = await pub.xautoclaim(stream, group, consumer, minIdleMs, "0-0", "COUNT", "100") as unknown[];
+      // xautoclaim returns [nextStartId, [[streamId, fields], ...], deletedIds]
+      const messages = (results[1] as Array<[string, string[]]>) ?? [];
+      return messages.map(([streamId, fields]) => {
+        const obj: Record<string, string> = {};
+        for (let i = 0; i < fields.length; i += 2) {
+          obj[fields[i]] = fields[i + 1];
+        }
+        return { message: deserializeMessage(obj), streamId };
+      });
+    },
+
+    async createGroup(stream, group, startId = "$") {
+      await ensureConnected();
+      try {
+        await pub.xgroup("CREATE", stream, group, startId, "MKSTREAM");
+      } catch (err: unknown) {
+        // Ignore BUSYGROUP — group already exists
+        if (err instanceof Error && err.message.includes("BUSYGROUP")) return;
+        throw err;
+      }
+    },
+
     async disconnect(): Promise<void> {
       // Stop all subscriptions
       for (const [, entry] of subscriptions) {
