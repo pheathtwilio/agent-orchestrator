@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { resumePlan } from "@/lib/plan-executor";
+import { resumePlan } from "@/lib/engine-bridge";
+import { getServices } from "@/lib/services";
 
 export const dynamic = "force-dynamic";
 
@@ -8,24 +9,14 @@ export const dynamic = "force-dynamic";
  * Preserves completed tasks and their results.
  */
 export async function POST(
-  request: Request,
+  _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
   const { id: planId } = await params;
 
-  let body: Record<string, unknown> = {};
   try {
-    body = await request.json();
-  } catch {
-    // No body is fine — use defaults
-  }
-
-  const skipTesting = body.skipTesting === true;
-  const maxConcurrency = typeof body.maxConcurrency === "number" ? body.maxConcurrency : 5;
-  const project = typeof body.project === "string" ? body.project : undefined;
-
-  try {
-    const result = await resumePlan(planId, { skipTesting, maxConcurrency, project });
+    await getServices();
+    const result = await resumePlan(planId);
     return NextResponse.json({ planId, ...result });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

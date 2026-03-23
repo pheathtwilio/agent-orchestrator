@@ -11,20 +11,8 @@ function getEngine(): WorkflowEngine {
   return engineInstance;
 }
 
-/** Returns true if the workflow engine is initialized and active. */
-export function isEngineActive(): boolean {
-  return engineInstance !== null;
-}
-
-export async function createPlan(params: {
-  planId: string;
-  projectId: string;
-  featureDescription: string;
-  workflowId: string;
-  workflowVersionId: string;
-  workflowSnapshot: unknown[];
-}): Promise<void> {
-  await getEngine().createPlan(params as any);
+export async function createPlan(params: Parameters<WorkflowEngine["createPlan"]>[0]): Promise<void> {
+  await getEngine().createPlan(params);
 }
 
 export async function approvePlan(planId: string): Promise<void> {
@@ -37,4 +25,12 @@ export async function cancelPlan(planId: string): Promise<void> {
 
 export function getPlanState(planId: string) {
   return getEngine().getPlanState(planId);
+}
+
+export async function resumePlan(planId: string): Promise<{ resumed: string[] }> {
+  return getEngine().resumePlan(planId);
+}
+
+export async function retryPlan(planId: string): Promise<void> {
+  return getEngine().retryPlan(planId);
 }

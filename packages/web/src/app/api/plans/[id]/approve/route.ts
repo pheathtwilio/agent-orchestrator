@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
-import { isEngineActive, approvePlan } from "@/lib/engine-bridge";
+import { approvePlan } from "@/lib/engine-bridge";
+import { getServices } from "@/lib/services";
 
 export const dynamic = "force-dynamic";
 
 /**
  * POST /api/plans/:id/approve — approve a plan in "reviewing" state.
  *
- * Only available when the WorkflowEngine is active. Transitions the plan
- * from reviewing -> executing, spawning tasks for the first workflow step.
+ * Transitions the plan from reviewing -> executing, spawning tasks
+ * for the first workflow step.
  */
 export async function POST(
   _request: Request,
@@ -15,14 +16,8 @@ export async function POST(
 ): Promise<Response> {
   const { id: planId } = await params;
 
-  if (!isEngineActive()) {
-    return NextResponse.json(
-      { error: "Approve is only available with WorkflowEngine (AO_USE_WORKFLOW_ENGINE=true)" },
-      { status: 501 },
-    );
-  }
-
   try {
+    await getServices();
     await approvePlan(planId);
     return NextResponse.json({ planId, approved: true });
   } catch (err) {

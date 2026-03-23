@@ -98,10 +98,9 @@ async function initServices(): Promise<Services> {
   const lifecycleManager = createLifecycleManager({ config, registry, sessionManager });
   lifecycleManager.start(30_000);
 
-  // Workflow engine — behind feature flag for Phase 2 transition
+  // Workflow engine — always initialize (replaces legacy plan-executor)
   let engine: WorkflowEngine | undefined;
-  if (process.env.AO_USE_WORKFLOW_ENGINE === "true") {
-    try {
+  try {
     const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
     const bus = createMessageBus(redisUrl);
     const engineStore = createEngineStore(redisUrl);
@@ -148,11 +147,10 @@ async function initServices(): Promise<Services> {
 
     await engine.start();
     setEngine(engine);
-    console.log("[engine] WorkflowEngine started (AO_USE_WORKFLOW_ENGINE=true)");
-    } catch (err) {
-      console.error("[engine] WorkflowEngine failed to start:", err);
-      engine = undefined;
-    }
+    console.log("[engine] WorkflowEngine started");
+  } catch (err) {
+    console.error("[engine] WorkflowEngine failed to start:", err);
+    engine = undefined;
   }
 
   const services = { config, registry, sessionManager, lifecycleManager, engine };

@@ -115,6 +115,63 @@ export class WorkflowEngine {
     return this.plans.get(planId);
   }
 
+  /**
+   * Resume a plan by resetting failed tasks to pending and re-approving.
+   * Preserves completed tasks.
+   */
+  async resumePlan(planId: string): Promise<{ resumed: string[] }> {
+    const state = this.plans.get(planId);
+    if (!state) throw new Error(`Plan ${planId} not found`);
+
+    const resumed: string[] = [];
+    for (const [taskId, task] of state.tasks) {
+      if (task.status === "failed") {
+        task.status = "pending";
+        task.error = null;
+        task.containerId = null;
+        task.retryCount = 0;
+        resumed.push(taskId);
+      }
+    }
+
+    if (resumed.length === 0) return { resumed };
+
+    // Reset phase to executing so the engine can re-process
+    state.phase = "executing";
+    state.updatedAt = Date.now();
+
+    // Re-approve to trigger spawning of ready tasks
+    await this.processEvent({ type: "PLAN_APPROVED", planId });
+    return { resumed };
+  }
+
+  /**
+   * Retry a plan by resetting ALL tasks to pending and re-starting.
+   */
+  async retryPlan(planId: string): Promise<void> {
+    const state = this.plans.get(planId);
+    if (!state) throw new Error(`Plan ${planId} not found`);
+
+    // Kill any running containers first
+    await this.processEvent({ type: "PLAN_CANCELLED", planId });
+
+    // Reset all tasks
+    for (const [, task] of state.tasks) {
+      task.status = "pending";
+      task.error = null;
+      task.containerId = null;
+      task.retryCount = 0;
+      task.result = null;
+    }
+
+    // Reset plan phase and re-approve
+    state.phase = "reviewing";
+    state.updatedAt = Date.now();
+    // Don't reset currentStepIndex — we keep the workflow position
+
+    await this.processEvent({ type: "PLAN_APPROVED", planId });
+  }
+
   private async recover(): Promise<void> {
     const planIds = await this.deps.store.getActivePlanIds();
     for (const planId of planIds) {

@@ -1,18 +1,14 @@
 import { NextResponse } from "next/server";
-import { createTaskStore } from "@composio/ao-message-bus";
-import { stopPlanWatcher } from "@/lib/plan-executor";
-import { isEngineActive, cancelPlan as engineCancelPlan } from "@/lib/engine-bridge";
+import { cancelPlan } from "@/lib/engine-bridge";
 import { getServices } from "@/lib/services";
 
 export const dynamic = "force-dynamic";
 
-const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379";
-
 /**
  * POST /api/plans/:id/cancel — cancel a running plan.
  *
- * Stops the background watcher, kills active agent containers,
- * and marks all in-progress/pending tasks as failed.
+ * Sends PLAN_CANCELLED event to the WorkflowEngine which kills
+ * all active containers and marks tasks as failed.
  */
 export async function POST(
   _request: Request,
@@ -21,53 +17,9 @@ export async function POST(
   const { id: planId } = await params;
 
   try {
-    // Feature flag: route through WorkflowEngine when active
-    if (isEngineActive()) {
-      await engineCancelPlan(planId);
-      return NextResponse.json({ planId, cancelled: true, engine: true });
-    }
-
-    // Legacy path: plan-executor
-    const taskStore = createTaskStore(REDIS_URL);
-
-    try {
-      // Stop the background watcher if running
-      stopPlanWatcher(planId);
-
-      const graph = await taskStore.getGraph(planId);
-      if (!graph) {
-        return NextResponse.json({ error: "Plan not found" }, { status: 404 });
-      }
-
-      const { sessionManager } = await getServices();
-      const killed: string[] = [];
-
-      // Kill active agent containers and mark non-terminal tasks as failed
-      let cancelled = 0;
-      for (const node of graph.nodes) {
-        if (!["complete", "failed"].includes(node.status)) {
-          // Kill the container if the task has an assigned agent
-          if (node.assignedTo) {
-            try {
-              await sessionManager.kill(node.assignedTo);
-              killed.push(node.assignedTo);
-            } catch {
-              // Container may already be gone
-            }
-          }
-
-          await taskStore.updateTask(planId, node.id, {
-            status: "failed",
-            assignedTo: null,
-          });
-          cancelled++;
-        }
-      }
-
-      return NextResponse.json({ planId, cancelled, killed });
-    } finally {
-      await taskStore.disconnect();
-    }
+    await getServices();
+    await cancelPlan(planId);
+    return NextResponse.json({ planId, cancelled: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: message }, { status: 500 });
