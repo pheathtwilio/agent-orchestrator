@@ -658,6 +658,9 @@ importers:
       '@composio/ao-plugin-workspace-worktree':
         specifier: workspace:*
         version: link:../plugins/workspace-worktree
+      '@composio/ao-workflow-engine':
+        specifier: workspace:*
+        version: link:../workflow-engine
       '@xterm/addon-fit':
         specifier: ^0.11.0
         version: 0.11.0

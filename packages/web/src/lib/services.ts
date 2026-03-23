@@ -33,6 +33,9 @@ import {
   isOrchestratorSession,
   TERMINAL_STATUSES,
 } from "@composio/ao-core";
+import { WorkflowEngine, type SpawnConfig } from "@composio/ao-workflow-engine";
+import { createMessageBus, createEngineStore } from "@composio/ao-message-bus";
+import { setEngine } from "./engine-bridge.js";
 
 // Static plugin imports — webpack needs these to be string literals
 import pluginRuntimeDocker from "@composio/ao-plugin-runtime-docker";
@@ -49,6 +52,7 @@ export interface Services {
   registry: PluginRegistry;
   sessionManager: OpenCodeSessionManager;
   lifecycleManager: LifecycleManager;
+  engine?: WorkflowEngine;
 }
 
 // Cache in globalThis for Next.js HMR stability
@@ -94,7 +98,55 @@ async function initServices(): Promise<Services> {
   const lifecycleManager = createLifecycleManager({ config, registry, sessionManager });
   lifecycleManager.start(30_000);
 
-  const services = { config, registry, sessionManager, lifecycleManager };
+  // Workflow engine — behind feature flag for Phase 2 transition
+  let engine: WorkflowEngine | undefined;
+  if (process.env.AO_USE_WORKFLOW_ENGINE === "true") {
+    const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
+    const bus = createMessageBus(redisUrl);
+    const engineStore = createEngineStore(redisUrl);
+
+    // Adapter: map engine SpawnConfig → sessionManager.spawn/kill
+    const containerToSession = new Map<string, string>();
+    const spawner = {
+      async spawn(spawnConfig: SpawnConfig): Promise<string> {
+        const session = await sessionManager.spawn({
+          projectId: spawnConfig.projectId,
+          prompt: spawnConfig.prompt,
+          branch: spawnConfig.branch,
+          runtimeConfig: {
+            containerName: spawnConfig.containerName,
+            image: spawnConfig.dockerImage,
+          },
+          environment: spawnConfig.environment,
+          metadata: { engineManaged: "true" },
+        });
+        containerToSession.set(spawnConfig.containerName, session.id);
+        return session.id;
+      },
+      async kill(containerId: string): Promise<void> {
+        const sessionId = containerToSession.get(containerId);
+        if (sessionId) {
+          await sessionManager.kill(sessionId).catch(() => {});
+          containerToSession.delete(containerId);
+        }
+      },
+    };
+
+    engine = new WorkflowEngine({
+      bus,
+      store: engineStore,
+      spawner,
+      eventEmitter: (eventType, planId, taskId, detail) => {
+        console.log(`[engine] ${eventType} plan=${planId} task=${taskId ?? "-"} ${detail}`);
+      },
+    });
+
+    await engine.start();
+    setEngine(engine);
+    console.log("[engine] WorkflowEngine started (AO_USE_WORKFLOW_ENGINE=true)");
+  }
+
+  const services = { config, registry, sessionManager, lifecycleManager, engine };
   globalForServices._aoServices = services;
   return services;
 }

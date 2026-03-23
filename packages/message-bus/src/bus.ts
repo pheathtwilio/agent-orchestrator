@@ -198,7 +198,7 @@ export function createMessageBus(redisUrl?: string): MessageBus {
               "COUNT", "10",
               "BLOCK", "5000",
               "STREAMS", stream, ">",
-            );
+            ) as [string, [string, string[]][]][] | null;
 
             if (!results) continue;
 
