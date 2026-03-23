@@ -90,6 +90,19 @@ export class WorkflowEngine {
     const state = createInitialState(params.planId);
     this.plans.set(params.planId, state);
 
+    // Persist to Redis so the plan survives restarts
+    await this.deps.store.createPlan(params.planId, {
+      phase: "created",
+      currentStepIndex: 0,
+      workflowId: params.workflowId,
+      workflowVersionId: params.workflowVersionId,
+      workflowSnapshot: JSON.stringify(params.workflowSnapshot),
+      projectId: params.projectId,
+      featureDescription: params.featureDescription,
+      createdAt: state.createdAt,
+      updatedAt: state.updatedAt,
+    });
+
     const event: EngineEvent = {
       type: "PLAN_CREATED",
       ...params,

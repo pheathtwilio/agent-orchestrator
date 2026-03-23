@@ -19,8 +19,7 @@ export function createEngineStore(redisUrl?: string): EngineStore {
   return {
     async createPlan(planId, data) {
       await ensureConnected();
-      const pipeline = redis.multi();
-      pipeline.hset(`ao:plan:${planId}`, {
+      await redis.hset(`ao:plan:${planId}`, {
         phase: data.phase,
         currentStepIndex: String(data.currentStepIndex),
         workflowId: data.workflowId,
@@ -31,8 +30,8 @@ export function createEngineStore(redisUrl?: string): EngineStore {
         createdAt: String(data.createdAt),
         updatedAt: String(data.updatedAt),
       });
-      pipeline.sadd("ao:engine:plans", planId);
-      await pipeline.exec();
+      const added = await redis.sadd("ao:engine:plans", planId);
+      console.log(`[engine-store] createPlan ${planId}: sadd returned ${added}`);
     },
 
     async getPlan(planId) {

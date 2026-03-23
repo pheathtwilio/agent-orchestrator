@@ -330,6 +330,17 @@ export function transition(
 
       const effects: Effect[] = [
         {
+          type: "UPDATE_PLAN",
+          planId: event.planId,
+          phase: "planning",
+        },
+        {
+          type: "UPDATE_TASK",
+          planId: event.planId,
+          taskId: plannerTaskId,
+          status: "spawning",
+        },
+        {
           type: "SPAWN_CONTAINER",
           planId: event.planId,
           taskId: plannerTaskId,
