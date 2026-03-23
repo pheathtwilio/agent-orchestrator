@@ -28,14 +28,21 @@ interface PlanListItem {
   enginePhase?: string;
 }
 
-/** A plan is stalled when it has tasks, nothing is running, and it isn't done. */
-function isStalled(plan: PlanListItem): boolean {
+/**
+ * A plan is stalled when it has tasks, isn't done, and either:
+ *   - nothing is marked as in-progress, OR
+ *   - tasks are "in progress" but no containers are actually running for this plan
+ */
+function isStalled(plan: PlanListItem, containers: ContainerInfo[]): boolean {
   if (plan.archived) return false;
   if (plan.taskCount === 0) return false;
   if (plan.progressPercent === 100) return false;
-  if (plan.inProgress > 0) return false;
-  // Has tasks but nothing running and not complete
-  return true;
+  if (plan.inProgress === 0) return true;
+  // Tasks are marked in-progress — verify containers are actually alive
+  const hasRunningContainer = containers.some(
+    (c) => c.state === "running" && c.name.includes(plan.id),
+  );
+  return !hasRunningContainer;
 }
 
 interface ContainerInfo {
@@ -264,12 +271,19 @@ export function PlansDashboard() {
     : false;
   const canResume = isTerminal && hasFailedTasks && hasCompletedTasks;
 
-  // Stalled: has tasks, nothing active, and not fully complete
-  const isStalledDetail = planDetail
-    ? planDetail.tasks.length > 0
-      && !planDetail.tasks.some((t) => ["assigned", "in_progress", "testing"].includes(t.status))
-      && !planDetail.tasks.every((t) => t.status === "complete")
-    : false;
+  // Stalled: has tasks, not fully complete, and either nothing active
+  // or tasks are "active" but no containers are actually running
+  const isStalledDetail = (() => {
+    if (!planDetail || planDetail.tasks.length === 0) return false;
+    if (planDetail.tasks.every((t) => t.status === "complete")) return false;
+    const hasActiveTasks = planDetail.tasks.some((t) => ["assigned", "in_progress", "testing"].includes(t.status));
+    if (!hasActiveTasks) return true;
+    // Tasks claim to be active — verify containers are actually running
+    const hasRunningContainer = selectedPlanId
+      ? containers.some((c) => c.state === "running" && c.name.includes(selectedPlanId))
+      : false;
+    return !hasRunningContainer;
+  })();
 
   const groups = planDetail ? groupTasks(planDetail.tasks) : null;
 
@@ -415,7 +429,7 @@ export function PlansDashboard() {
             ) : (
               <div className="space-y-2">
                 {plans.map((plan) => {
-                  const stalled = isStalled(plan);
+                  const stalled = isStalled(plan, containers);
                   return (
                   <div
                     key={plan.id}
