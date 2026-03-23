@@ -37,7 +37,13 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     // Ensure services (including engine) are initialized
-    await getServices();
+    const { engine } = await getServices();
+    if (!engine) {
+      return NextResponse.json(
+        { error: "WorkflowEngine failed to start. Is Redis running? (REDIS_URL)" },
+        { status: 503 },
+      );
+    }
 
     // Resolve the active workflow for plan creation
     const workflowData = getActiveSnapshot("default-sdlc");
