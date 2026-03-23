@@ -1,14 +1,14 @@
 import type { WorkflowEngine } from "@composio/ao-workflow-engine";
 
-let engineInstance: WorkflowEngine | null = null;
-
-export function setEngine(engine: WorkflowEngine): void {
-  engineInstance = engine;
-}
-
 function getEngine(): WorkflowEngine {
-  if (!engineInstance) throw new Error("WorkflowEngine not initialized");
-  return engineInstance;
+  // Access engine from the globalThis-cached services singleton.
+  // This avoids module-scope variable issues with Next.js HMR/webpack.
+  const globalForServices = globalThis as typeof globalThis & {
+    _aoServices?: { engine?: WorkflowEngine };
+  };
+  const engine = globalForServices._aoServices?.engine;
+  if (!engine) throw new Error("WorkflowEngine not initialized");
+  return engine;
 }
 
 export async function createPlan(params: Parameters<WorkflowEngine["createPlan"]>[0]): Promise<void> {
@@ -24,8 +24,12 @@ export async function cancelPlan(planId: string): Promise<void> {
 }
 
 export function getPlanState(planId: string) {
-  if (!engineInstance) return undefined;
-  return engineInstance.getPlanState(planId);
+  const globalForServices = globalThis as typeof globalThis & {
+    _aoServices?: { engine?: WorkflowEngine };
+  };
+  const engine = globalForServices._aoServices?.engine;
+  if (!engine) return undefined;
+  return engine.getPlanState(planId);
 }
 
 export async function resumePlan(planId: string): Promise<{ resumed: string[] }> {

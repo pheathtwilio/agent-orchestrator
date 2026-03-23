@@ -35,7 +35,7 @@ import {
 } from "@composio/ao-core";
 import { WorkflowEngine, type SpawnConfig } from "@composio/ao-workflow-engine";
 import { createMessageBus, createEngineStore } from "@composio/ao-message-bus";
-import { setEngine } from "./engine-bridge";
+
 
 // Static plugin imports — webpack needs these to be string literals
 import pluginRuntimeDocker from "@composio/ao-plugin-runtime-docker";
@@ -230,7 +230,6 @@ async function initEngine(
     });
 
     await engine.start();
-    setEngine(engine);
     console.log("[engine] WorkflowEngine started");
     return engine;
   } catch (err) {
