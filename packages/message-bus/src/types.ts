@@ -84,6 +84,30 @@ export interface MessageBus {
   /** Unsubscribe from agent output */
   unsubscribeOutput(sessionId: string): Promise<void>;
 
+  /** Subscribe using Redis consumer groups (XREADGROUP).
+   *  Messages must be explicitly acknowledged via ack().
+   *  handler receives (message, streamId) — streamId is needed for ack. */
+  subscribeGroup(
+    stream: string,
+    group: string,
+    consumer: string,
+    handler: (message: BusMessage, streamId: string) => Promise<void>,
+  ): Promise<void>;
+
+  /** Acknowledge a message in a consumer group */
+  ack(stream: string, group: string, streamId: string): Promise<void>;
+
+  /** Claim pending messages from crashed consumers (XAUTOCLAIM) */
+  autoClaim(
+    stream: string,
+    group: string,
+    consumer: string,
+    minIdleMs: number,
+  ): Promise<Array<{ message: BusMessage; streamId: string }>>;
+
+  /** Create a consumer group (idempotent — ignores BUSYGROUP error) */
+  createGroup(stream: string, group: string, startId?: string): Promise<void>;
+
   /** Graceful shutdown */
   disconnect(): Promise<void>;
 }
@@ -241,3 +265,41 @@ export interface SummaryStore {
   /** Graceful shutdown */
   disconnect(): Promise<void>;
 }
+
+// ============================================================================
+// ENGINE STORE (HASH-per-task atomic persistence)
+// ============================================================================
+
+export interface EnginePlanData {
+  phase: string;
+  currentStepIndex: number;
+  workflowId: string;
+  workflowVersionId: string;
+  workflowSnapshot: string; // JSON
+  projectId: string;
+  featureDescription: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface EngineStore {
+  createPlan(planId: string, data: EnginePlanData): Promise<void>;
+  getPlan(planId: string): Promise<EnginePlanData | null>;
+  atomicUpdate(planId: string, ops: AtomicOp[]): Promise<void>;
+  getTask(planId: string, taskId: string): Promise<string | null>;
+  getAllTasks(planId: string): Promise<Record<string, string>>;
+  getActivePlanIds(): Promise<string[]>;
+  deactivatePlan(planId: string): Promise<void>;
+  registerContainer(containerName: string, planId: string, taskId: string): Promise<void>;
+  lookupContainer(containerName: string): Promise<{ planId: string; taskId: string } | null>;
+  removeContainer(containerName: string): Promise<void>;
+  updateHeartbeat(planId: string, taskId: string, timestamp: number): Promise<void>;
+  getHeartbeats(): Promise<Record<string, number>>;
+  disconnect(): Promise<void>;
+}
+
+export type AtomicOp =
+  | { type: "SET_TASK"; taskId: string; data: string }
+  | { type: "SET_PLAN_FIELD"; field: string; value: string }
+  | { type: "ADD_CLEANUP"; planId: string; resource: string }
+  | { type: "REMOVE_CLEANUP"; planId: string; resource: string };

@@ -1,12 +1,14 @@
 import { NextResponse } from "next/server";
-import { resumePlan } from "@/lib/engine-bridge";
+import { approvePlan } from "@/lib/engine-bridge";
 import { getServices } from "@/lib/services";
 
 export const dynamic = "force-dynamic";
 
 /**
- * POST /api/plans/:id/resume — resume a plan by re-running only failed tasks.
- * Preserves completed tasks and their results.
+ * POST /api/plans/:id/approve — approve a plan in "reviewing" state.
+ *
+ * Transitions the plan from reviewing -> executing, spawning tasks
+ * for the first workflow step.
  */
 export async function POST(
   _request: Request,
@@ -16,8 +18,8 @@ export async function POST(
 
   try {
     await getServices();
-    const result = await resumePlan(planId);
-    return NextResponse.json({ planId, ...result });
+    await approvePlan(planId);
+    return NextResponse.json({ planId, approved: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: message }, { status: 500 });

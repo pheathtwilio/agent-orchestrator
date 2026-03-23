@@ -1,29 +1,37 @@
 import { NextResponse } from "next/server";
-import { restartAllWatchers, getActiveWatcherIds } from "@/lib/plan-executor";
+import { getServices } from "@/lib/services";
 
 export const dynamic = "force-dynamic";
 
 /**
- * POST /api/plans/restart-watchers — restart all plan watchers with fresh code.
- * Use after deploying code changes to the planner/executor.
+ * POST /api/plans/restart-watchers — no-op with WorkflowEngine.
+ * The engine handles recovery automatically via its recover() method on start.
  *
- * GET returns the list of currently active watcher plan IDs.
+ * GET returns the engine status.
  */
 export async function POST(): Promise<Response> {
   try {
-    const result = await restartAllWatchers({
-      skipTesting: false,
-      maxConcurrency: 3,
-    });
-    return NextResponse.json(result);
+    const { engine } = await getServices();
+    if (!engine) {
+      return NextResponse.json({ error: "WorkflowEngine not initialized" }, { status: 503 });
+    }
+    // Engine recovery happens on start — nothing to restart
+    return NextResponse.json({ message: "WorkflowEngine handles recovery automatically" });
   } catch (err) {
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Failed to restart watchers" },
+      { error: err instanceof Error ? err.message : "Failed" },
       { status: 500 },
     );
   }
 }
 
 export async function GET(): Promise<Response> {
-  return NextResponse.json({ activeWatchers: getActiveWatcherIds() });
+  try {
+    const { engine } = await getServices();
+    return NextResponse.json({
+      engineActive: !!engine,
+    });
+  } catch {
+    return NextResponse.json({ engineActive: false });
+  }
 }

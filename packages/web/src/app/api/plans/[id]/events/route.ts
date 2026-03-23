@@ -4,6 +4,7 @@ import {
   type BusMessage,
   type TaskGraph,
 } from "@composio/ao-message-bus";
+import { getPlanState } from "@/lib/engine-bridge";
 
 export const dynamic = "force-dynamic";
 
@@ -52,6 +53,8 @@ export async function GET(
   /** Build a snapshot payload from the current graph state + usage */
   async function buildSnapshot(graph: TaskGraph) {
     const usage = await taskStore.getUsage(planId);
+    // Include engine phase when workflow engine is active
+    const enginePhase = getPlanState(planId)?.phase ?? null;
     return {
       plan: {
         id: graph.id,
@@ -61,6 +64,7 @@ export async function GET(
         updatedAt: graph.updatedAt,
         workflowSnapshot: graph.workflowSnapshot,
         currentStepIndex: graph.currentStepIndex,
+        enginePhase,
       },
       tasks: graph.nodes.map((n) => ({
         id: n.id,

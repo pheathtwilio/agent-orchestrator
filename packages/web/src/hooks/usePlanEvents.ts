@@ -51,6 +51,7 @@ export interface PlanSnapshot {
     updatedAt: number;
     workflowSnapshot?: WorkflowStep[];
     currentStepIndex?: number;
+    enginePhase?: string | null;
   };
   tasks: PlanTask[];
   usage: UsageTotals;

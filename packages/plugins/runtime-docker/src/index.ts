@@ -92,7 +92,7 @@ export function create(config?: Record<string, unknown>): Runtime {
 
     async create(rtConfig: RuntimeCreateConfig): Promise<RuntimeHandle> {
       assertValidSessionId(rtConfig.sessionId);
-      const containerName = `ao-${rtConfig.sessionId}`;
+      const containerName = (rtConfig.runtimeConfig?.containerName as string) ?? `ao-${rtConfig.sessionId}`;
       // Per-session image override (e.g. skill-specific Dockerfiles)
       const sessionImage = (rtConfig.runtimeConfig?.image as string) ?? image;
 
