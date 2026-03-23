@@ -99,13 +99,97 @@ async function initServices(): Promise<Services> {
   lifecycleManager.start(30_000);
 
   // Workflow engine — always initialize (replaces legacy plan-executor)
-  let engine: WorkflowEngine | undefined;
+  const engine = await initEngine(sessionManager);
+
+  const services: Services = { config, registry, sessionManager, lifecycleManager, engine };
+  globalForServices._aoServices = services;
+
+  // If engine failed to start, schedule background retries that update services in-place
+  if (!engine) {
+    scheduleEngineRetry(services, sessionManager);
+  }
+
+  return services;
+}
+
+// ---------------------------------------------------------------------------
+// Engine initialization helpers
+// ---------------------------------------------------------------------------
+
+/** Ensure Redis is reachable, auto-starting a Docker container if needed. */
+async function ensureRedis(redisUrl: string): Promise<void> {
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const execFileAsync = promisify(execFile);
+  const net = await import("node:net");
+
+  const url = new URL(redisUrl);
+  const host = url.hostname || "localhost";
+  const port = parseInt(url.port || "6379", 10);
+
+  // Quick TCP probe
+  const reachable = await new Promise<boolean>((resolve) => {
+    const socket = net.createConnection({ host, port, timeout: 2000 });
+    socket.on("connect", () => { socket.destroy(); resolve(true); });
+    socket.on("error", () => { socket.destroy(); resolve(false); });
+    socket.on("timeout", () => { socket.destroy(); resolve(false); });
+  });
+
+  if (reachable) return;
+
+  console.log("[engine] Redis not reachable — attempting to start a Docker container...");
+
+  // Check if an ao-redis container already exists but is stopped
+  try {
+    const { stdout } = await execFileAsync("docker", [
+      "ps", "-a", "--filter", "name=^ao-redis$", "--format", "{{.Status}}",
+    ], { timeout: 5000 });
+
+    if (stdout.trim()) {
+      // Container exists — restart it
+      await execFileAsync("docker", ["start", "ao-redis"], { timeout: 10000 });
+      console.log("[engine] Restarted existing ao-redis container");
+    } else {
+      // Create a new container
+      await execFileAsync("docker", [
+        "run", "-d", "--name", "ao-redis",
+        "-p", `${port}:6379`,
+        "redis:alpine",
+      ], { timeout: 30000 });
+      console.log("[engine] Started new ao-redis container");
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[engine] Failed to auto-start Redis container: ${msg}`);
+    throw new Error(`Redis not reachable at ${redisUrl} and auto-start failed: ${msg}`);
+  }
+
+  // Wait for Redis to accept connections
+  for (let i = 0; i < 10; i++) {
+    const ok = await new Promise<boolean>((resolve) => {
+      const socket = net.createConnection({ host, port, timeout: 1000 });
+      socket.on("connect", () => { socket.destroy(); resolve(true); });
+      socket.on("error", () => { socket.destroy(); resolve(false); });
+      socket.on("timeout", () => { socket.destroy(); resolve(false); });
+    });
+    if (ok) return;
+    await new Promise((r) => setTimeout(r, 500));
+  }
+
+  throw new Error(`Redis container started but not accepting connections at ${redisUrl}`);
+}
+
+/** Create and start the WorkflowEngine. Returns undefined on failure. */
+async function initEngine(
+  sessionManager: ReturnType<typeof createSessionManager>,
+): Promise<WorkflowEngine | undefined> {
   try {
     const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379";
+    await ensureRedis(redisUrl);
+
     const bus = createMessageBus(redisUrl);
     const engineStore = createEngineStore(redisUrl);
 
-    // Adapter: map engine SpawnConfig → sessionManager.spawn/kill
     const containerToSession = new Map<string, string>();
     const spawner = {
       async spawn(spawnConfig: SpawnConfig): Promise<string> {
@@ -136,7 +220,7 @@ async function initServices(): Promise<Services> {
       },
     };
 
-    engine = new WorkflowEngine({
+    const engine = new WorkflowEngine({
       bus,
       store: engineStore,
       spawner,
@@ -148,14 +232,38 @@ async function initServices(): Promise<Services> {
     await engine.start();
     setEngine(engine);
     console.log("[engine] WorkflowEngine started");
+    return engine;
   } catch (err) {
     console.error("[engine] WorkflowEngine failed to start:", err);
-    engine = undefined;
+    return undefined;
   }
+}
 
-  const services = { config, registry, sessionManager, lifecycleManager, engine };
-  globalForServices._aoServices = services;
-  return services;
+/** Retry engine init in the background, updating the cached services on success. */
+function scheduleEngineRetry(
+  services: Services,
+  sessionManager: ReturnType<typeof createSessionManager>,
+): void {
+  const MAX_RETRIES = 5;
+  const RETRY_INTERVAL = 10_000;
+  let attempt = 0;
+
+  const timer = setInterval(async () => {
+    attempt++;
+    console.log(`[engine] Retry ${attempt}/${MAX_RETRIES}...`);
+
+    const engine = await initEngine(sessionManager);
+    if (engine) {
+      services.engine = engine;
+      clearInterval(timer);
+      return;
+    }
+
+    if (attempt >= MAX_RETRIES) {
+      console.error("[engine] Giving up after max retries. Plans will not work until restart.");
+      clearInterval(timer);
+    }
+  }, RETRY_INTERVAL);
 }
 
 // ---------------------------------------------------------------------------
