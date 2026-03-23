@@ -83,11 +83,10 @@ export async function POST(
         }
       }
 
-      // Mark plan as failed and deactivate
+      // Mark plan as cancelled — keep in active set so it remains visible
       await engineStore.atomicUpdate(planId, [
-        { type: "SET_PLAN_FIELD", field: "phase", value: "failed" },
+        { type: "SET_PLAN_FIELD", field: "phase", value: "cancelled" },
       ]);
-      await engineStore.deactivatePlan(planId);
 
       return NextResponse.json({ planId, cancelled: true, killed });
     } finally {
