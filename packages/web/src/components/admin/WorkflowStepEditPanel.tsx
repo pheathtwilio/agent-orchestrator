@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { useState, useEffect, useCallback } from "react";
 import type {
@@ -6,7 +7,7 @@ import type {
   ProgrammaticCondition,
   StepCondition,
 } from "@/lib/workflow-types";
-import { cn } from "@/lib/cn";
+
 
 interface WorkflowStepEditPanelProps {
   workflowId: string;
