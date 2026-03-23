@@ -24,7 +24,8 @@ export async function cancelPlan(planId: string): Promise<void> {
 }
 
 export function getPlanState(planId: string) {
-  return getEngine().getPlanState(planId);
+  if (!engineInstance) return undefined;
+  return engineInstance.getPlanState(planId);
 }
 
 export async function resumePlan(planId: string): Promise<{ resumed: string[] }> {
