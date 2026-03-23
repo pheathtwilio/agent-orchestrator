@@ -161,8 +161,8 @@ async function mergePlanPRs(
   // Force-remove agent containers (sessionManager.kill may miss dead containers)
   for (const node of taskNodes) {
     if (!node.assignedTo) continue;
-    const containerName = `ao-${node.assignedTo}`;
     try {
+      const containerName = await resolveContainerName(node.assignedTo);
       await execShell("docker", ["rm", "-f", containerName], undefined);
     } catch {
       // Container may already be gone
@@ -197,6 +197,27 @@ async function execShell(
   } catch {
     return null;
   }
+}
+
+/**
+ * Resolve the Docker container name for a session.
+ * Sessions use tmux-style naming: ao-{hash}-{prefix}-{num}.
+ * Falls back to ao-{sessionId} if the session metadata is unavailable.
+ */
+async function resolveContainerName(sessionId: string): Promise<string> {
+  try {
+    const { sessionManager } = await getServices();
+    const session = await sessionManager.get(sessionId);
+    if (session?.runtimeHandle?.id) return session.runtimeHandle.id;
+  } catch { /* session may be archived or missing */ }
+  // Fallback: try to find by suffix match
+  const result = await execShell(
+    "docker",
+    ["ps", "-a", "--filter", `name=-${sessionId}$`, "--format", "{{.Names}}"],
+    undefined,
+  );
+  if (result?.trim()) return result.trim().split("\n")[0];
+  return `ao-${sessionId}`;
 }
 
 export interface ExecutePlanOptions {
@@ -257,7 +278,8 @@ export async function createAndExecutePlan(
         await sessionManager.kill(sessionId);
       },
       destroyContainer: async (sessionId) => {
-        await execShell("docker", ["rm", "-f", `ao-${sessionId}`], undefined);
+        const name = await resolveContainerName(sessionId);
+        await execShell("docker", ["rm", "-f", name], undefined);
       },
       mergePlanPRs,
     },
@@ -320,7 +342,9 @@ function startWatchLoop(
     } catch (err) {
       console.error(`[plan-executor] Error handling message for ${planId}:`, err);
     }
-  }, "0");
+  }, "0").catch((err) => {
+    console.error(`[plan-executor] Failed to subscribe for ${planId}:`, err);
+  });
 
   // Periodic monitor check (stuck agents, deadlocks, orphaned sessions)
   const monitorInterval = setInterval(async () => {
@@ -341,24 +365,25 @@ function startWatchLoop(
         }
 
         // Detect orphaned sessions: tasks marked in_progress/assigned but
-        // the session container no longer exists
-        const { sessionManager: sm } = await getServices();
-        const activeSessions = await sm.list();
-        const aliveIds = new Set(activeSessions.map((s) => s.id));
-
+        // the session container is no longer running
         for (const node of graph.nodes) {
           if (
             node.assignedTo &&
-            ["in_progress", "assigned", "testing"].includes(node.status) &&
-            !aliveIds.has(node.assignedTo)
+            ["in_progress", "assigned", "testing"].includes(node.status)
           ) {
-            console.log(
-              `[plan-executor] Orphaned task ${node.id} — session ${node.assignedTo} no longer exists. Marking failed.`,
-            );
-            await taskStore.updateTask(planId, node.id, {
-              status: "failed",
-              assignedTo: null,
-            });
+            const containerName = await resolveContainerName(node.assignedTo);
+            const isRunning = containerName
+              ? (await execShell("docker", ["inspect", "--format", "{{.State.Running}}", containerName], undefined)) === "true"
+              : false;
+            if (!isRunning) {
+              console.log(
+                `[plan-executor] Orphaned task ${node.id} — container for ${node.assignedTo} not running. Marking failed.`,
+              );
+              await taskStore.updateTask(planId, node.id, {
+                status: "failed",
+                assignedTo: null,
+              });
+            }
           }
         }
       }
@@ -565,7 +590,8 @@ export async function resumePlan(
         await sessionManager.kill(sessionId);
       },
       destroyContainer: async (sessionId) => {
-        await execShell("docker", ["rm", "-f", `ao-${sessionId}`], undefined);
+        const name = await resolveContainerName(sessionId);
+        await execShell("docker", ["rm", "-f", name], undefined);
       },
       mergePlanPRs,
     },
@@ -639,7 +665,8 @@ export async function retryPlan(
         await sessionManager.kill(sessionId);
       },
       destroyContainer: async (sessionId) => {
-        await execShell("docker", ["rm", "-f", `ao-${sessionId}`], undefined);
+        const name = await resolveContainerName(sessionId);
+        await execShell("docker", ["rm", "-f", name], undefined);
       },
       mergePlanPRs,
     },

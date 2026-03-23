@@ -1000,12 +1000,14 @@ export function createPlanner(
 
       const taskId = message.payload.taskId as string | undefined;
 
-      // Guard against replayed messages: skip if the task is already terminal.
-      // This is important when the watcher replays from stream offset "0" after
-      // a restart — we don't want to re-trigger doctor spawns for old failures.
+      // Guard against replayed messages: skip if the task is already terminal
+      // or no longer exists in the graph. This is important when the watcher
+      // replays from stream offset "0" after a restart — we don't want to
+      // re-trigger doctor spawns for old failures or reset completed tasks.
       if (taskId && (message.type === "TASK_COMPLETE" || message.type === "TASK_FAILED")) {
         const taskNode = plan.taskGraph.nodes.find((n) => n.id === taskId);
-        if (taskNode && (taskNode.status === "complete" || taskNode.status === "failed")) {
+        if (!taskNode) return; // Task removed from graph (e.g. cleaned-up doctor)
+        if (taskNode.status === "complete" || taskNode.status === "failed") {
           return; // Already processed
         }
       }
