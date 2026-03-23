@@ -161,7 +161,7 @@ async function ensureRedis(redisUrl: string): Promise<void> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[engine] Failed to auto-start Redis container: ${msg}`);
-    throw new Error(`Redis not reachable at ${redisUrl} and auto-start failed: ${msg}`);
+    throw new Error(`Redis not reachable at ${redisUrl} and auto-start failed: ${msg}`, { cause: err });
   }
 
   // Wait for Redis to accept connections

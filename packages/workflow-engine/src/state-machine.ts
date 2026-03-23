@@ -9,6 +9,7 @@ import type {
   EngineTaskStatus,
   WorkflowStepSnapshot,
 } from "./types.js";
+import { buildPlannerPrompt } from "./planner-prompt.js";
 
 // ============================================================================
 // HELPERS
@@ -183,6 +184,7 @@ function applyFailurePolicy(
         id: doctorId,
         status: "pending",
         containerId: null,
+        sessionId: null,
         branch: task.branch,
         result: null,
         error: null,
@@ -218,6 +220,7 @@ function applyFailurePolicy(
         t.retryCount += 1;
         t.error = null;
         t.containerId = null;
+        t.sessionId = null;
         state.tasks.set(task.id, t);
         // Immediately try to spawn if deps are met
         const readyTasks = readyTasksForStep(state, task.stepIndex);
@@ -309,6 +312,7 @@ export function transition(
         id: plannerTaskId,
         status: "spawning",
         containerId: null,
+        sessionId: null,
         branch: null,
         result: null,
         error: null,
@@ -347,7 +351,11 @@ export function transition(
           config: {
             containerName: containerName(event.planId, plannerTaskId),
             projectId: event.projectId,
-            prompt: event.featureDescription,
+            prompt: buildPlannerPrompt(
+              event.featureDescription,
+              event.workflowSnapshot,
+              event.planId,
+            ),
             branch: "",
             model: "opus",
             skill: "planner",
@@ -516,6 +524,7 @@ export function transition(
 
       task.status = "running";
       task.containerId = containerName(state.planId, event.taskId);
+      task.sessionId = event.sessionId;
       nextState.tasks.set(event.taskId, task);
 
       return {
@@ -567,21 +576,75 @@ export function transition(
         nextState.tasks.set(event.taskId, task);
         nextState.phase = "reviewing";
 
-        return {
-          nextState,
-          effects: [
-            {
-              type: "UPDATE_PLAN",
-              planId: event.planId,
-              phase: "reviewing",
-            },
-            {
-              type: "POPULATE_TASKS",
-              planId: event.planId,
-              tasks: [], // Executor will parse payload
-            },
-          ],
-        };
+        // Parse tasks from the planner output
+        const rawTasks = Array.isArray(event.payload?.tasks) ? event.payload.tasks : [];
+        const populatedTasks: TaskState[] = rawTasks.map((t: Record<string, unknown>) => ({
+          id: String(t.id ?? ""),
+          status: "pending" as const,
+          containerId: null,
+          sessionId: null,
+          branch: t.branch ? String(t.branch) : null,
+          result: null,
+          error: null,
+          stepIndex: typeof t.stepIndex === "number" ? t.stepIndex : 0,
+          retryCount: 0,
+          doctorTaskId: null,
+          healingTaskId: null,
+          taskType: "implementation" as const,
+          title: String(t.title ?? t.id ?? ""),
+          description: String(t.description ?? ""),
+          acceptanceCriteria: Array.isArray(t.acceptanceCriteria) ? t.acceptanceCriteria.map(String) : [],
+          fileBoundary: Array.isArray(t.fileBoundary) ? t.fileBoundary.map(String) : [],
+          dependsOn: Array.isArray(t.dependsOn) ? t.dependsOn.map(String) : [],
+          model: String(t.model ?? "sonnet"),
+          skill: String(t.skill ?? "fullstack"),
+          dockerImage: String(t.dockerImage ?? ""),
+        }));
+
+        // Add tasks to state
+        for (const pt of populatedTasks) {
+          nextState.tasks.set(pt.id, pt);
+        }
+
+        const effects: Effect[] = [
+          {
+            type: "UPDATE_PLAN",
+            planId: event.planId,
+            phase: "reviewing",
+          },
+          {
+            type: "UPDATE_TASK",
+            planId: event.planId,
+            taskId: event.taskId,
+            status: "complete",
+            result: event.payload,
+          },
+          {
+            type: "POPULATE_TASKS",
+            planId: event.planId,
+            tasks: populatedTasks,
+          },
+        ];
+
+        // Kill planner container
+        if (task.containerId) {
+          effects.push({
+            type: "KILL_CONTAINER",
+            planId: event.planId,
+            taskId: event.taskId,
+            containerId: task.containerId,
+          });
+        }
+
+        // Auto-approve if tasks were populated
+        if (populatedTasks.length > 0) {
+          effects.push({
+            type: "FEED_EVENT",
+            event: { type: "PLAN_APPROVED", planId: event.planId },
+          });
+        }
+
+        return { nextState, effects };
       }
 
       // --- Doctor completion ---
@@ -596,6 +659,7 @@ export function transition(
           healedTask.status = "pending";
           healedTask.error = null;
           healedTask.containerId = null;
+          healedTask.sessionId = null;
           healedTask.doctorTaskId = null;
           nextState.tasks.set(task.healingTaskId, healedTask);
         }

@@ -509,6 +509,19 @@ function launchAgent() {
       }
     } catch { /* ignore */ }
 
+    // Check for structured plan output (written by planner agents)
+    let planOutput = undefined;
+    const PLAN_OUTPUT_PATH = "/tmp/ao-plan-output.json";
+    try {
+      if (existsSync(PLAN_OUTPUT_PATH)) {
+        const raw = readFileSync(PLAN_OUTPUT_PATH, "utf-8");
+        planOutput = JSON.parse(raw);
+        console.log(`[sidecar] Found plan output: ${Array.isArray(planOutput) ? planOutput.length : 0} tasks`);
+      }
+    } catch (err) {
+      console.error(`[sidecar] Failed to read plan output: ${err.message}`);
+    }
+
     if (code === 0) {
       await publishToOrchestrator("TASK_COMPLETE", {
         branch: gitInfo.branch,
@@ -517,6 +530,7 @@ function launchAgent() {
           ? lastResultData.result.slice(0, 500)
           : `Task ${TASK_ID} completed successfully (skill: ${SKILL})`,
         usage: sessionUsage,
+        ...(planOutput && { tasks: planOutput }),
       });
     } else {
       await publishToOrchestrator("TASK_FAILED", {

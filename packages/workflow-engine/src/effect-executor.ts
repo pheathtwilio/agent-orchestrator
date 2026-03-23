@@ -20,7 +20,7 @@ export interface EffectDeps {
     releaseAll(owner: string): Promise<number>;
   };
   eventEmitter: (eventType: string, planId: string, taskId: string | undefined, detail: string) => void;
-  feedEvent: (event: EngineEvent) => void;
+  feedEvent: (event: EngineEvent) => void | Promise<void>;
 }
 
 export class EffectExecutor {
@@ -52,7 +52,7 @@ export class EffectExecutor {
       case "POPULATE_TASKS":
         return this.handlePopulateTasks(effect);
       case "FEED_EVENT":
-        this.deps.feedEvent(effect.event);
+        await this.deps.feedEvent(effect.event);
         return;
       case "ACQUIRE_LOCKS":
         return this.handleAcquireLocks(effect);
@@ -64,8 +64,14 @@ export class EffectExecutor {
   private async handleSpawn(effect: Extract<Effect, { type: "SPAWN_CONTAINER" }>): Promise<void> {
     try {
       console.log(`[effect] Spawning container ${effect.config.containerName} for ${effect.planId}/${effect.taskId}`);
-      await this.deps.spawner.spawn(effect.config);
+      const sessionId = await this.deps.spawner.spawn(effect.config);
       await this.deps.store.registerContainer(effect.config.containerName, effect.planId, effect.taskId);
+      this.deps.feedEvent({
+        type: "CONTAINER_READY",
+        planId: effect.planId,
+        taskId: effect.taskId,
+        sessionId,
+      });
     } catch (err) {
       console.error(`[effect] Spawn failed for ${effect.config.containerName}:`, err instanceof Error ? err.message : String(err));
       this.deps.feedEvent({

@@ -143,6 +143,7 @@ export class WorkflowEngine {
         task.status = "pending";
         task.error = null;
         task.containerId = null;
+        task.sessionId = null;
         task.retryCount = 0;
         resumed.push(taskId);
       }
@@ -174,6 +175,7 @@ export class WorkflowEngine {
       task.status = "pending";
       task.error = null;
       task.containerId = null;
+      task.sessionId = null;
       task.retryCount = 0;
       task.result = null;
     }

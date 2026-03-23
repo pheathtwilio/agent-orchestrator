@@ -29,6 +29,7 @@ function makeTask(id: string, overrides: Partial<TaskState> = {}): TaskState {
     id,
     status: "pending",
     containerId: null,
+    sessionId: null,
     branch: null,
     result: null,
     error: null,
@@ -169,7 +170,7 @@ describe("transition: plan lifecycle", () => {
 // ============================================================================
 
 describe("transition: planner completion", () => {
-  it("planner TASK_COMPLETE: planning -> reviewing", () => {
+  it("planner TASK_COMPLETE with no tasks: planning -> reviewing, no auto-approve", () => {
     const plannerTask = makeTask("planner", { taskType: "planner", status: "running", stepIndex: -1 });
     const state = makePlanState({
       phase: "planning",
@@ -189,6 +190,72 @@ describe("transition: planner completion", () => {
     expect(nextState.tasks.get("planner")!.status).toBe("complete");
     expect(effects).toContainEqual(expect.objectContaining({ type: "UPDATE_PLAN", phase: "reviewing" }));
     expect(effects).toContainEqual(expect.objectContaining({ type: "POPULATE_TASKS" }));
+    // No auto-approve when tasks are empty
+    expect(effects).not.toContainEqual(expect.objectContaining({ type: "FEED_EVENT" }));
+  });
+
+  it("planner TASK_COMPLETE with tasks: populates tasks, kills container, auto-approves", () => {
+    const plannerTask = makeTask("planner", {
+      taskType: "planner", status: "running", stepIndex: -1,
+      containerId: "ao--plan-test--planner",
+    });
+    const state = makePlanState({
+      phase: "planning",
+      tasks: new Map([["planner", plannerTask]]),
+    });
+
+    const event: EngineEvent = {
+      type: "TASK_COMPLETE",
+      planId: "plan-test",
+      taskId: "planner",
+      payload: {
+        tasks: [
+          {
+            id: "0.1",
+            title: "Build auth API",
+            description: "Implement login endpoint",
+            stepIndex: 0,
+            skill: "backend",
+            model: "sonnet",
+            dependsOn: [],
+            fileBoundary: ["src/auth/**"],
+            acceptanceCriteria: ["Login works"],
+          },
+          {
+            id: "0.2",
+            title: "Build auth UI",
+            description: "Implement login form",
+            stepIndex: 0,
+            skill: "frontend",
+            model: "sonnet",
+            dependsOn: [],
+            fileBoundary: ["src/components/auth/**"],
+            acceptanceCriteria: ["Form renders"],
+          },
+        ],
+      },
+    };
+
+    const { nextState, effects } = transition(state, event, NOW);
+
+    expect(nextState.phase).toBe("reviewing");
+    expect(nextState.tasks.size).toBe(3); // planner + 2 tasks
+    expect(nextState.tasks.get("0.1")!.title).toBe("Build auth API");
+    expect(nextState.tasks.get("0.1")!.skill).toBe("backend");
+    expect(nextState.tasks.get("0.1")!.status).toBe("pending");
+    expect(nextState.tasks.get("0.2")!.title).toBe("Build auth UI");
+
+    // Effects: UPDATE_PLAN, UPDATE_TASK, POPULATE_TASKS, KILL_CONTAINER, FEED_EVENT(auto-approve)
+    expect(effects).toContainEqual(expect.objectContaining({ type: "UPDATE_PLAN", phase: "reviewing" }));
+    expect(effects).toContainEqual(expect.objectContaining({ type: "UPDATE_TASK", taskId: "planner", status: "complete" }));
+    expect(effects).toContainEqual(expect.objectContaining({ type: "POPULATE_TASKS" }));
+    const populateEffect = effects.find((e) => e.type === "POPULATE_TASKS") as any;
+    expect(populateEffect.tasks).toHaveLength(2);
+    expect(effects).toContainEqual(expect.objectContaining({ type: "KILL_CONTAINER", containerId: "ao--plan-test--planner" }));
+    expect(effects).toContainEqual(expect.objectContaining({
+      type: "FEED_EVENT",
+      event: { type: "PLAN_APPROVED", planId: "plan-test" },
+    }));
   });
 
   it("planner TASK_FAILED: planning -> failed", () => {
@@ -244,11 +311,12 @@ describe("transition: task lifecycle", () => {
     });
 
     const { nextState, effects } = transition(state, {
-      type: "CONTAINER_READY", planId: "plan-test", taskId: "1.1",
+      type: "CONTAINER_READY", planId: "plan-test", taskId: "1.1", sessionId: "ao-99",
     }, NOW);
 
     expect(nextState.tasks.get("1.1")!.status).toBe("running");
     expect(nextState.tasks.get("1.1")!.containerId).toBe("ao--plan-test--1.1");
+    expect(nextState.tasks.get("1.1")!.sessionId).toBe("ao-99");
     expect(effects).toContainEqual(expect.objectContaining({ type: "UPDATE_TASK", status: "running" }));
   });
 

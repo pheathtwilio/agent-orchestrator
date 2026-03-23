@@ -39,7 +39,7 @@ async function resolveGraph(
       status: task.status === "running" ? "in_progress" : task.status === "spawning" ? "assigned" : task.status || "pending",
       skill: task.skill || "",
       model: task.model || "",
-      assignedTo: task.containerId || null,
+      assignedTo: task.sessionId || task.containerId || null,
       branch: task.branch || null,
       dependsOn: task.dependsOn || [],
       fileBoundary: task.fileBoundary || [],

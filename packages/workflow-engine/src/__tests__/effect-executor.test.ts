@@ -47,6 +47,9 @@ describe("EffectExecutor", () => {
 
     expect(deps.spawner.spawn).toHaveBeenCalledOnce();
     expect(deps.store.registerContainer).toHaveBeenCalledWith("ao--plan-1--1.1", "plan-1", "1.1");
+    expect(deps.feedEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "CONTAINER_READY", planId: "plan-1", taskId: "1.1", sessionId: "session-123" })
+    );
   });
 
   it("feeds SPAWN_FAILED event when spawn throws", async () => {
@@ -150,7 +153,7 @@ describe("EffectExecutor", () => {
     expect(deps.eventEmitter).toHaveBeenCalledWith("task_failed", "plan-1", "1.1", "OOM killed");
   });
 
-  it("executes CLEANUP: kills containers, deactivates plan, feeds CLEANUP_DONE", async () => {
+  it("executes CLEANUP: kills containers, feeds CLEANUP_DONE (no deactivation)", async () => {
     const deps = makeMockDeps();
     const executor = new EffectExecutor(deps as any);
 
@@ -164,7 +167,8 @@ describe("EffectExecutor", () => {
     }]);
 
     expect(deps.spawner.kill).toHaveBeenCalledTimes(2);
-    expect(deps.store.deactivatePlan).toHaveBeenCalledWith("plan-1");
+    // Plans stay in active set — phase field indicates status
+    expect(deps.store.deactivatePlan).not.toHaveBeenCalled();
     expect(deps.feedEvent).toHaveBeenCalledWith(
       expect.objectContaining({ type: "CLEANUP_DONE", planId: "plan-1" })
     );

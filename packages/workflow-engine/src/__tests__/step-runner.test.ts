@@ -4,7 +4,7 @@ import type { TaskState, StepState } from "../types.js";
 
 function makeTask(id: string, status: string, stepIndex: number, dependsOn: string[] = []): TaskState {
   return {
-    id, status: status as any, containerId: null, branch: null,
+    id, status: status as any, containerId: null, sessionId: null, branch: null,
     result: null, error: null, stepIndex, retryCount: 0,
     doctorTaskId: null, healingTaskId: null, taskType: "implementation",
     title: id, description: "", acceptanceCriteria: [], fileBoundary: [],

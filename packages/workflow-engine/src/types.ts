@@ -57,6 +57,7 @@ export interface TaskState {
   id: string;
   status: EngineTaskStatus;
   containerId: string | null;
+  sessionId: string | null;
   branch: string | null;
   result: Record<string, unknown> | null;
   error: string | null;
@@ -110,7 +111,7 @@ export type EngineEvent =
   | { type: "PLAN_APPROVED"; planId: string }
   | { type: "PLAN_CANCELLED"; planId: string }
   | { type: "SPAWN_FAILED"; planId: string; taskId: string; error: string }
-  | { type: "CONTAINER_READY"; planId: string; taskId: string }
+  | { type: "CONTAINER_READY"; planId: string; taskId: string; sessionId: string }
   | { type: "DEPS_MET"; planId: string; taskId: string }
   | { type: "STEP_COMPLETE"; planId: string; stepIndex: number }
   | { type: "MERGE_FAILED"; planId: string; error: string }

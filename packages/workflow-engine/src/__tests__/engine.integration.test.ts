@@ -128,7 +128,7 @@ describe("Regression: known bugs", () => {
 
     const state = engine.getPlanState("plan-1")!;
     state.tasks.set("1.1", {
-      id: "1.1", status: "complete", containerId: null, branch: "feat-1",
+      id: "1.1", status: "complete", containerId: null, sessionId: null, branch: "feat-1",
       result: { summary: "done" }, error: null, stepIndex: 1, retryCount: 0,
       doctorTaskId: null, healingTaskId: null, taskType: "implementation",
       title: "Task 1.1", description: "", acceptanceCriteria: [], fileBoundary: [],
@@ -218,6 +218,59 @@ describe("Scenario: plan creation through approval", () => {
     // 3. Approve the plan
     await engine.processEvent({ type: "PLAN_APPROVED", planId: "plan-1" });
     expect(engine.getPlanState("plan-1")!.phase).toBe("executing");
+  });
+});
+
+describe("Scenario: planner produces tasks → auto-approve → executing", () => {
+  it("full flow: create → planner with tasks → auto-approve → tasks spawned", async () => {
+    const deps = makeMockEngineDeps();
+    const engine = new WorkflowEngine(deps as any);
+
+    // 1. Create plan with a workflow step
+    await engine.createPlan({
+      planId: "plan-1", projectId: "proj-1", featureDescription: "Auth system",
+      workflowId: "std-dev", workflowVersionId: "v1",
+      workflowSnapshot: [
+        { name: "Implement", sort_order: 0, description: "Build the feature",
+          exit_criteria: { programmatic: ["all_tasks_complete"], description: "" },
+          failure_policy: { action: "fail_plan", description: "" },
+          agent_config: { skill: "fullstack", model_tier: "sonnet" },
+          is_conditional: false, condition: null },
+      ],
+    });
+    expect(engine.getPlanState("plan-1")!.phase).toBe("planning");
+
+    // 2. Simulate planner running
+    const state = engine.getPlanState("plan-1")!;
+    const plannerTask = state.tasks.get("planner")!;
+    state.tasks.set("planner", { ...plannerTask, status: "running", containerId: "ao--plan-1--planner" });
+
+    // 3. Planner completes with task graph
+    const spawnCallsBefore = deps.spawner.spawn.mock.calls.length;
+    await engine.processEvent({
+      type: "TASK_COMPLETE", planId: "plan-1", taskId: "planner",
+      payload: {
+        tasks: [
+          { id: "0.1", title: "Build API", description: "Implement endpoints",
+            stepIndex: 0, skill: "backend", model: "sonnet",
+            dependsOn: [], fileBoundary: ["src/api/**"], acceptanceCriteria: ["API works"] },
+          { id: "0.2", title: "Build UI", description: "Implement frontend",
+            stepIndex: 0, skill: "frontend", model: "sonnet",
+            dependsOn: [], fileBoundary: ["src/ui/**"], acceptanceCriteria: ["UI renders"] },
+        ],
+      },
+    });
+
+    // Should have auto-approved and started executing
+    expect(engine.getPlanState("plan-1")!.phase).toBe("executing");
+    expect(engine.getPlanState("plan-1")!.tasks.size).toBe(3); // planner + 2 tasks
+    // Tasks go spawning → running because CONTAINER_READY fires synchronously after spawn
+    expect(engine.getPlanState("plan-1")!.tasks.get("0.1")!.status).toBe("running");
+    expect(engine.getPlanState("plan-1")!.tasks.get("0.2")!.status).toBe("running");
+
+    // Two task containers should have been spawned (not counting the planner)
+    const newSpawnCalls = deps.spawner.spawn.mock.calls.length - spawnCallsBefore;
+    expect(newSpawnCalls).toBe(2);
   });
 });
 
