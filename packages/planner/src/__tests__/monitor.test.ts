@@ -12,6 +12,10 @@ function createMockDeps(overrides: Partial<MonitorDeps> = {}): MonitorDeps {
       disconnect: vi.fn(),
       subscribeOutput: vi.fn(),
       unsubscribeOutput: vi.fn(),
+      subscribeGroup: vi.fn(),
+      ack: vi.fn(),
+      autoClaim: vi.fn(),
+      createGroup: vi.fn(),
     },
     fileLocks: {
       acquire: vi.fn(),

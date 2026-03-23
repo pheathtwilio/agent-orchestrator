@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createAndExecutePlan } from "@/lib/plan-executor";
 import { isEngineActive, createPlan as engineCreatePlan } from "@/lib/engine-bridge";
 import { getActiveSnapshot } from "@/lib/workflow-store";
+import { getServices } from "@/lib/services";
 import { DEFAULT_WORKFLOW } from "@composio/ao-workflow-engine";
 
 export const dynamic = "force-dynamic";
@@ -44,6 +45,9 @@ export async function POST(request: Request): Promise<Response> {
   const maxConcurrency = typeof body.maxConcurrency === "number" ? body.maxConcurrency : 5;
 
   try {
+    // Ensure services (including engine) are initialized before checking engine state
+    await getServices();
+
     // Resolve the active workflow for plan creation
     const workflowData = getActiveSnapshot("default-sdlc");
 

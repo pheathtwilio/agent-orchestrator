@@ -162,6 +162,18 @@ export async function buildDashboardEnv(
  * to sibling package paths that work from both src/ and dist/.
  */
 export function findWebDir(): string {
+  // Env var override — lets worktrees and custom setups specify the web dir
+  if (process.env.AO_WEB_DIR && existsSync(resolve(process.env.AO_WEB_DIR, "package.json"))) {
+    return resolve(process.env.AO_WEB_DIR);
+  }
+
+  // If cwd is a monorepo root (or worktree) with packages/web, prefer it.
+  // This ensures `ao ui` from a worktree uses the worktree's code.
+  const cwdCandidate = resolve(process.cwd(), "packages/web");
+  if (existsSync(resolve(cwdCandidate, "package.json"))) {
+    return cwdCandidate;
+  }
+
   // Try to resolve from node_modules first (installed as workspace dep)
   try {
     const pkgJson = require.resolve("@composio/ao-web/package.json");

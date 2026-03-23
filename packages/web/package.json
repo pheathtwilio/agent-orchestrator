@@ -24,6 +24,7 @@
     "@aws-sdk/credential-providers": "^3.1010.0",
     "@composio/ao-core": "workspace:*",
     "@composio/ao-message-bus": "workspace:*",
+    "@composio/ao-workflow-engine": "workspace:*",
     "@composio/ao-planner": "workspace:*",
     "@composio/ao-plugin-agent-claude-code": "workspace:*",
     "@composio/ao-plugin-agent-opencode": "workspace:*",
