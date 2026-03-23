@@ -25,6 +25,17 @@ interface PlanListItem {
   createdAt: number;
   updatedAt: number;
   archived?: boolean;
+  enginePhase?: string;
+}
+
+/** A plan is stalled when it has tasks, nothing is running, and it isn't done. */
+function isStalled(plan: PlanListItem): boolean {
+  if (plan.archived) return false;
+  if (plan.taskCount === 0) return false;
+  if (plan.progressPercent === 100) return false;
+  if (plan.inProgress > 0) return false;
+  // Has tasks but nothing running and not complete
+  return true;
 }
 
 interface ContainerInfo {
@@ -253,6 +264,13 @@ export function PlansDashboard() {
     : false;
   const canResume = isTerminal && hasFailedTasks && hasCompletedTasks;
 
+  // Stalled: has tasks, nothing active, and not fully complete
+  const isStalledDetail = planDetail
+    ? planDetail.tasks.length > 0
+      && !planDetail.tasks.some((t) => ["assigned", "in_progress", "testing"].includes(t.status))
+      && !planDetail.tasks.every((t) => t.status === "complete")
+    : false;
+
   const groups = planDetail ? groupTasks(planDetail.tasks) : null;
 
   // Compute the latest meaningful bus message per task for stage display
@@ -396,15 +414,18 @@ export function PlansDashboard() {
               </p>
             ) : (
               <div className="space-y-2">
-                {plans.map((plan) => (
+                {plans.map((plan) => {
+                  const stalled = isStalled(plan);
+                  return (
                   <div
                     key={plan.id}
                     className={cn(
                       "rounded-lg border transition-all group",
                       plan.archived && "opacity-50",
+                      stalled && "animate-[pulse_3s_ease-in-out_infinite] border-red-700/60",
                       selectedPlanId === plan.id
-                        ? "bg-zinc-800/80 border-cyan-700/60"
-                        : "bg-zinc-900/50 border-zinc-800 hover:border-zinc-700",
+                        ? stalled ? "bg-red-950/30 border-red-600/70" : "bg-zinc-800/80 border-cyan-700/60"
+                        : stalled ? "bg-red-950/20 border-red-800/50 hover:border-red-600/60" : "bg-zinc-900/50 border-zinc-800 hover:border-zinc-700",
                     )}
                   >
                     <button
@@ -449,7 +470,8 @@ export function PlansDashboard() {
                       )}
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -649,6 +671,39 @@ export function PlansDashboard() {
                   )}
                 </div>
               </div>
+
+              {/* Stalled plan banner */}
+              {isStalledDetail && (
+                <div className="rounded-lg border border-red-700/50 bg-red-950/30 p-4">
+                  <div className="flex items-start gap-3">
+                    <span className="text-red-400 text-lg mt-0.5">⚠</span>
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-red-300">
+                        This plan has stalled
+                      </p>
+                      <p className="text-xs text-zinc-400 mt-1">
+                        {hasFailedTasks
+                          ? `${planDetail.tasks.filter((t) => t.status === "failed").length} task(s) failed. Resume to retry failed tasks while keeping completed work, or cancel to stop the plan.`
+                          : "No agents are running but the plan isn't complete. Resume to restart pending tasks, or cancel to stop the plan."}
+                      </p>
+                      <div className="flex gap-2 mt-3">
+                        <button
+                          onClick={() => resumePlanAction(planDetail.id)}
+                          className="px-3 py-1.5 rounded text-xs font-medium text-green-400 border border-green-800/50 hover:bg-green-900/30 transition-colors"
+                        >
+                          Resume Plan
+                        </button>
+                        <button
+                          onClick={() => cancelPlan(planDetail.id)}
+                          className="px-3 py-1.5 rounded text-xs font-medium text-red-400 border border-red-800/50 hover:bg-red-900/30 transition-colors"
+                        >
+                          Cancel Plan
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Tab bar */}
               <div className="flex items-center gap-1 border-b border-zinc-800">
