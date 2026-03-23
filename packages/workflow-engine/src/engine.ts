@@ -122,6 +122,24 @@ export class WorkflowEngine {
     this.plans.set(planId, nextState);
 
     await this.effectExecutor.execute(effects);
+
+    // Sync full in-memory state to Redis after every transition that produced effects.
+    // This ensures Redis always has complete task data (sessionId, containerId, title, etc.)
+    // rather than the partial data written by individual UPDATE_TASK effects.
+    if (effects.length > 0) {
+      await this.syncStateToRedis(planId, nextState);
+    }
+  }
+
+  private async syncStateToRedis(planId: string, state: PlanState): Promise<void> {
+    const ops: Array<{ type: string; [key: string]: unknown }> = [
+      { type: "SET_PLAN_FIELD", field: "phase", value: state.phase },
+      { type: "SET_PLAN_FIELD", field: "currentStepIndex", value: String(state.currentStepIndex) },
+    ];
+    for (const [taskId, task] of state.tasks) {
+      ops.push({ type: "SET_TASK", taskId, data: JSON.stringify(task) });
+    }
+    await this.deps.store.atomicUpdate(planId, ops);
   }
 
   getPlanState(planId: string): PlanState | undefined {

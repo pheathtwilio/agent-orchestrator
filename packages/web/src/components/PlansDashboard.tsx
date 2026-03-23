@@ -276,6 +276,25 @@ export function PlansDashboard() {
   const isStalledDetail = (() => {
     if (!planDetail || planDetail.tasks.length === 0) return false;
     if (planDetail.tasks.every((t) => t.status === "complete")) return false;
+    // Engine plans in transitional phases (decomposing, reviewing) are not stalled —
+    // the engine manages the transition automatically
+    const phase = snapshot?.plan.enginePhase;
+    if (phase === "decomposing" || phase === "reviewing") {
+      // Only stalled if the decomposer task exists but no container is running
+      const hasRunningContainer = selectedPlanId
+        ? containers.some((c) => c.state === "running" && c.name.includes(selectedPlanId))
+        : false;
+      const hasActiveDecomposer = planDetail.tasks.some(
+        (t) => t.id === "decomposer" && ["assigned", "in_progress"].includes(t.status),
+      );
+      // If decomposer is active and container is running, not stalled
+      if (hasActiveDecomposer && hasRunningContainer) return false;
+      // If decomposer is complete but phase is still decomposing, it's transitioning
+      if (planDetail.tasks.some((t) => t.id === "decomposer" && t.status === "complete")) return false;
+      // If decomposer hasn't started yet, not stalled
+      if (planDetail.tasks.some((t) => t.id === "decomposer" && t.status === "pending")) return false;
+    }
+    if (phase === "complete" || phase === "cancelled" || phase === "failed") return false;
     const hasActiveTasks = planDetail.tasks.some((t) => ["assigned", "in_progress", "testing"].includes(t.status));
     if (!hasActiveTasks) return true;
     // Tasks claim to be active — verify containers are actually running
@@ -641,6 +660,7 @@ export function PlansDashboard() {
                       <WorkflowStepProgress
                         steps={snapshot.plan.workflowSnapshot}
                         currentStepIndex={snapshot.plan.currentStepIndex}
+                        enginePhase={snapshot.plan.enginePhase}
                       />
                     </div>
                   )}

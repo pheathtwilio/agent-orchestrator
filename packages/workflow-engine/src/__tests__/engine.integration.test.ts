@@ -301,6 +301,33 @@ describe("Scenario: plan cancellation", () => {
   });
 });
 
+describe("Scenario: Redis state sync includes full task data", () => {
+  it("syncStateToRedis persists sessionId, containerId, and title", async () => {
+    const deps = makeMockEngineDeps();
+    const engine = new WorkflowEngine(deps as any);
+
+    await engine.createPlan({
+      planId: "plan-1", projectId: "proj-1", featureDescription: "Auth",
+      workflowId: "std-dev", workflowVersionId: "v1", workflowSnapshot: [],
+    });
+
+    // After createPlan, atomicUpdate should have been called with full task data
+    const calls = deps.store.atomicUpdate.mock.calls;
+    const lastCall = calls[calls.length - 1];
+    const setTaskOps = lastCall[1].filter((op: any) => op.type === "SET_TASK");
+    expect(setTaskOps.length).toBeGreaterThan(0);
+
+    // The decomposer task should have full data including title and taskType
+    const decomposerOp = setTaskOps.find((op: any) => op.taskId === "decomposer");
+    expect(decomposerOp).toBeDefined();
+    const taskData = JSON.parse(decomposerOp.data);
+    expect(taskData.title).toBe("Decomposing");
+    expect(taskData.taskType).toBe("decomposer");
+    expect(taskData.status).toBe("running"); // After CONTAINER_READY fires
+    expect(taskData.sessionId).toBe("session-1"); // From mock spawner
+  });
+});
+
 describe("Scenario: concurrent events for same plan", () => {
   it("MessageProcessor ensures sequential processing", async () => {
     const deps = makeMockEngineDeps();
