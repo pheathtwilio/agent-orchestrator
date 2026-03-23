@@ -9,7 +9,7 @@ import type {
   EngineTaskStatus,
   WorkflowStepSnapshot,
 } from "./types.js";
-import { buildPlannerPrompt } from "./planner-prompt.js";
+import { buildDecomposerPrompt } from "./decomposer-prompt.js";
 
 // ============================================================================
 // HELPERS
@@ -291,7 +291,7 @@ export function transition(
         return { nextState: state, effects: [] };
       }
 
-      nextState.phase = "planning";
+      nextState.phase = "decomposing";
       nextState.projectId = event.projectId;
       nextState.featureDescription = event.featureDescription;
       nextState.workflowId = event.workflowId;
@@ -306,10 +306,10 @@ export function transition(
         snapshot: snap,
       }));
 
-      // Create planner task
-      const plannerTaskId = "planner";
-      const plannerTask: TaskState = {
-        id: plannerTaskId,
+      // Create decomposer task
+      const decomposerTaskId = "decomposer";
+      const decomposerTask: TaskState = {
+        id: decomposerTaskId,
         status: "spawning",
         containerId: null,
         sessionId: null,
@@ -320,47 +320,47 @@ export function transition(
         retryCount: 0,
         doctorTaskId: null,
         healingTaskId: null,
-        taskType: "planner",
-        title: "Planning",
+        taskType: "decomposer",
+        title: "Decomposing",
         description: event.featureDescription,
         acceptanceCriteria: [],
         fileBoundary: [],
         dependsOn: [],
         model: "opus",
-        skill: "planner",
+        skill: "decomposer",
         dockerImage: "",
         };
-      nextState.tasks.set(plannerTaskId, plannerTask);
+      nextState.tasks.set(decomposerTaskId, decomposerTask);
 
       const effects: Effect[] = [
         {
           type: "UPDATE_PLAN",
           planId: event.planId,
-          phase: "planning",
+          phase: "decomposing",
         },
         {
           type: "UPDATE_TASK",
           planId: event.planId,
-          taskId: plannerTaskId,
+          taskId: decomposerTaskId,
           status: "spawning",
         },
         {
           type: "SPAWN_CONTAINER",
           planId: event.planId,
-          taskId: plannerTaskId,
+          taskId: decomposerTaskId,
           config: {
-            containerName: containerName(event.planId, plannerTaskId),
+            containerName: containerName(event.planId, decomposerTaskId),
             projectId: event.projectId,
-            prompt: buildPlannerPrompt(
+            prompt: buildDecomposerPrompt(
               event.featureDescription,
               event.workflowSnapshot,
               event.planId,
             ),
             branch: "",
             model: "opus",
-            skill: "planner",
+            skill: "decomposer",
             dockerImage: "",
-            environment: { AO_PLAN_ID: event.planId, AO_TASK_ID: plannerTaskId },
+            environment: { AO_PLAN_ID: event.planId, AO_TASK_ID: decomposerTaskId },
           },
         },
       ];
@@ -566,8 +566,8 @@ export function transition(
       }
 
       // --- Planner completion ---
-      if (task.taskType === "planner") {
-        if (nextState.phase !== "planning") {
+      if (task.taskType === "decomposer") {
+        if (nextState.phase !== "decomposing") {
           return { nextState: state, effects: [] };
         }
 
@@ -745,8 +745,8 @@ export function transition(
       }
 
       // Planner failure
-      if (task.taskType === "planner") {
-        if (nextState.phase !== "planning") {
+      if (task.taskType === "decomposer") {
+        if (nextState.phase !== "decomposing") {
           return { nextState: state, effects: [] };
         }
 

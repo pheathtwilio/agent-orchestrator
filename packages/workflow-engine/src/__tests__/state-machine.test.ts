@@ -71,7 +71,7 @@ const NOW = 5000;
 // ============================================================================
 
 describe("transition: plan lifecycle", () => {
-  it("PLAN_CREATED: created -> planning, spawns planner", () => {
+  it("PLAN_CREATED: created -> decomposing, spawns decomposer", () => {
     const state = makePlanState({ phase: "created" });
     const event: EngineEvent = {
       type: "PLAN_CREATED",
@@ -85,13 +85,13 @@ describe("transition: plan lifecycle", () => {
 
     const { nextState, effects } = transition(state, event, NOW);
 
-    expect(nextState.phase).toBe("planning");
-    expect(nextState.tasks.has("planner")).toBe(true);
-    expect(nextState.tasks.get("planner")!.taskType).toBe("planner");
-    expect(nextState.tasks.get("planner")!.status).toBe("spawning");
+    expect(nextState.phase).toBe("decomposing");
+    expect(nextState.tasks.has("decomposer")).toBe(true);
+    expect(nextState.tasks.get("decomposer")!.taskType).toBe("decomposer");
+    expect(nextState.tasks.get("decomposer")!.status).toBe("spawning");
     expect(nextState.steps).toHaveLength(1);
     expect(effects).toContainEqual(
-      expect.objectContaining({ type: "SPAWN_CONTAINER", taskId: "planner" }),
+      expect.objectContaining({ type: "SPAWN_CONTAINER", taskId: "decomposer" }),
     );
   });
 
@@ -169,45 +169,45 @@ describe("transition: plan lifecycle", () => {
 // PLANNER COMPLETION
 // ============================================================================
 
-describe("transition: planner completion", () => {
-  it("planner TASK_COMPLETE with no tasks: planning -> reviewing, no auto-approve", () => {
-    const plannerTask = makeTask("planner", { taskType: "planner", status: "running", stepIndex: -1 });
+describe("transition: decomposer completion", () => {
+  it("decomposer TASK_COMPLETE with no tasks: decomposing -> reviewing, no auto-approve", () => {
+    const decomposerTask = makeTask("decomposer", { taskType: "decomposer", status: "running", stepIndex: -1 });
     const state = makePlanState({
-      phase: "planning",
-      tasks: new Map([["planner", plannerTask]]),
+      phase: "decomposing",
+      tasks: new Map([["decomposer", decomposerTask]]),
     });
 
     const event: EngineEvent = {
       type: "TASK_COMPLETE",
       planId: "plan-test",
-      taskId: "planner",
+      taskId: "decomposer",
       payload: { tasks: [] },
     };
 
     const { nextState, effects } = transition(state, event, NOW);
 
     expect(nextState.phase).toBe("reviewing");
-    expect(nextState.tasks.get("planner")!.status).toBe("complete");
+    expect(nextState.tasks.get("decomposer")!.status).toBe("complete");
     expect(effects).toContainEqual(expect.objectContaining({ type: "UPDATE_PLAN", phase: "reviewing" }));
     expect(effects).toContainEqual(expect.objectContaining({ type: "POPULATE_TASKS" }));
     // No auto-approve when tasks are empty
     expect(effects).not.toContainEqual(expect.objectContaining({ type: "FEED_EVENT" }));
   });
 
-  it("planner TASK_COMPLETE with tasks: populates tasks, kills container, auto-approves", () => {
-    const plannerTask = makeTask("planner", {
-      taskType: "planner", status: "running", stepIndex: -1,
-      containerId: "ao--plan-test--planner",
+  it("decomposer TASK_COMPLETE with tasks: populates tasks, kills container, auto-approves", () => {
+    const decomposerTask = makeTask("decomposer", {
+      taskType: "decomposer", status: "running", stepIndex: -1,
+      containerId: "ao--plan-test--decomposer",
     });
     const state = makePlanState({
-      phase: "planning",
-      tasks: new Map([["planner", plannerTask]]),
+      phase: "decomposing",
+      tasks: new Map([["decomposer", decomposerTask]]),
     });
 
     const event: EngineEvent = {
       type: "TASK_COMPLETE",
       planId: "plan-test",
-      taskId: "planner",
+      taskId: "decomposer",
       payload: {
         tasks: [
           {
@@ -239,7 +239,7 @@ describe("transition: planner completion", () => {
     const { nextState, effects } = transition(state, event, NOW);
 
     expect(nextState.phase).toBe("reviewing");
-    expect(nextState.tasks.size).toBe(3); // planner + 2 tasks
+    expect(nextState.tasks.size).toBe(3); // decomposer + 2 tasks
     expect(nextState.tasks.get("0.1")!.title).toBe("Build auth API");
     expect(nextState.tasks.get("0.1")!.skill).toBe("backend");
     expect(nextState.tasks.get("0.1")!.status).toBe("pending");
@@ -247,30 +247,30 @@ describe("transition: planner completion", () => {
 
     // Effects: UPDATE_PLAN, UPDATE_TASK, POPULATE_TASKS, KILL_CONTAINER, FEED_EVENT(auto-approve)
     expect(effects).toContainEqual(expect.objectContaining({ type: "UPDATE_PLAN", phase: "reviewing" }));
-    expect(effects).toContainEqual(expect.objectContaining({ type: "UPDATE_TASK", taskId: "planner", status: "complete" }));
+    expect(effects).toContainEqual(expect.objectContaining({ type: "UPDATE_TASK", taskId: "decomposer", status: "complete" }));
     expect(effects).toContainEqual(expect.objectContaining({ type: "POPULATE_TASKS" }));
     const populateEffect = effects.find((e) => e.type === "POPULATE_TASKS") as any;
     expect(populateEffect.tasks).toHaveLength(2);
-    expect(effects).toContainEqual(expect.objectContaining({ type: "KILL_CONTAINER", containerId: "ao--plan-test--planner" }));
+    expect(effects).toContainEqual(expect.objectContaining({ type: "KILL_CONTAINER", containerId: "ao--plan-test--decomposer" }));
     expect(effects).toContainEqual(expect.objectContaining({
       type: "FEED_EVENT",
       event: { type: "PLAN_APPROVED", planId: "plan-test" },
     }));
   });
 
-  it("planner TASK_FAILED: planning -> failed", () => {
-    const plannerTask = makeTask("planner", { taskType: "planner", status: "running", stepIndex: -1 });
+  it("decomposer TASK_FAILED: decomposing -> failed", () => {
+    const decomposerTask = makeTask("decomposer", { taskType: "decomposer", status: "running", stepIndex: -1 });
     const state = makePlanState({
-      phase: "planning",
-      tasks: new Map([["planner", plannerTask]]),
+      phase: "decomposing",
+      tasks: new Map([["decomposer", decomposerTask]]),
     });
 
     const { nextState, effects } = transition(state, {
-      type: "TASK_FAILED", planId: "plan-test", taskId: "planner", error: "LLM error",
+      type: "TASK_FAILED", planId: "plan-test", taskId: "decomposer", error: "LLM error",
     }, NOW);
 
     expect(nextState.phase).toBe("failed");
-    expect(nextState.tasks.get("planner")!.status).toBe("failed");
+    expect(nextState.tasks.get("decomposer")!.status).toBe("failed");
     expect(effects).toContainEqual(expect.objectContaining({ type: "CLEANUP" }));
   });
 });

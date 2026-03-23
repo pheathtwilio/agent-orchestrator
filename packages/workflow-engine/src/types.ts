@@ -7,7 +7,7 @@
 
 export type PlanPhase =
   | "created"
-  | "planning"
+  | "decomposing"
   | "reviewing"
   | "executing"
   | "completing"
@@ -65,7 +65,7 @@ export interface TaskState {
   retryCount: number;
   doctorTaskId: string | null;
   healingTaskId: string | null;
-  taskType: "implementation" | "planner" | "doctor" | "integration" | "verify";
+  taskType: "implementation" | "decomposer" | "doctor" | "integration" | "verify";
   title: string;
   description: string;
   acceptanceCriteria: string[];

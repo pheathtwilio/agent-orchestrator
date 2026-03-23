@@ -2,12 +2,12 @@ import type { WorkflowStepSnapshot } from "./types.js";
 
 export const DEFAULT_WORKFLOW: WorkflowStepSnapshot[] = [
   {
-    name: "Plan",
-    description: "Planner container decomposes feature into tasks",
+    name: "Decompose",
+    description: "Decomposer agent analyzes the feature and breaks it into implementation tasks",
     sort_order: 0,
-    exit_criteria: { programmatic: ["all_tasks_complete"], description: "Planner has decomposed the feature" },
-    failure_policy: { action: "fail_plan", description: "Planner failure aborts the plan" },
-    agent_config: { skill: "fullstack", model_tier: "opus", docker_image: "ao-agent:latest" },
+    exit_criteria: { programmatic: ["all_tasks_complete"], description: "Feature decomposed into task graph" },
+    failure_policy: { action: "fail_plan", description: "Decomposition failure aborts the plan" },
+    agent_config: { skill: "decomposer", model_tier: "opus", docker_image: "ao-agent:latest" },
     is_conditional: false,
     condition: null,
   },

@@ -1,16 +1,17 @@
 import type { WorkflowStepSnapshot } from "./types.js";
 
 /**
- * Build the prompt for the planner agent.
+ * Build the prompt for the decomposer agent.
  *
- * The planner decomposes a feature description into a structured task graph
- * that the workflow engine can execute. Each task is assigned to a workflow
- * step and includes enough detail for an independent agent to implement it.
+ * The decomposer analyzes a feature description and breaks it into a
+ * structured task graph that the workflow engine can execute. Each task is
+ * assigned to a workflow step and includes enough detail for an independent
+ * agent to implement it.
  *
- * The planner writes its output to /tmp/ao-plan-output.json which the sidecar
- * picks up and includes in the TASK_COMPLETE payload.
+ * The decomposer writes its output to /tmp/ao-plan-output.json which the
+ * sidecar picks up and includes in the TASK_COMPLETE payload.
  */
-export function buildPlannerPrompt(
+export function buildDecomposerPrompt(
   featureDescription: string,
   workflowSteps: WorkflowStepSnapshot[],
   planId: string,
@@ -27,7 +28,7 @@ export function buildPlannerPrompt(
       ].filter(Boolean).join("\n")).join("\n\n")
     : "No workflow steps defined. Create all tasks at stepIndex 0.";
 
-  return `You are a planning agent for the Agent Orchestrator. Your job is to decompose a feature into a task graph that independent coding agents can execute in parallel.
+  return `You are a decomposer agent for the Agent Orchestrator. Your job is to analyze a feature and break it into a task graph that independent coding agents can execute in parallel.
 
 ## Feature to Implement
 

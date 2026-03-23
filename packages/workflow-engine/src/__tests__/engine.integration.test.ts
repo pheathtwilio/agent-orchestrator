@@ -37,7 +37,7 @@ function makeMockEngineDeps() {
 }
 
 describe("WorkflowEngine", () => {
-  it("creates a plan and transitions to planning", async () => {
+  it("creates a plan and transitions to decomposing", async () => {
     const deps = makeMockEngineDeps();
     const engine = new WorkflowEngine(deps as any);
 
@@ -52,13 +52,13 @@ describe("WorkflowEngine", () => {
 
     const state = engine.getPlanState("plan-1");
     expect(state).toBeDefined();
-    expect(state!.phase).toBe("planning");
+    expect(state!.phase).toBe("decomposing");
 
     // Planner container should have been spawned
     expect(deps.spawner.spawn).toHaveBeenCalledOnce();
   });
 
-  it("handles TASK_COMPLETE event for planner", async () => {
+  it("handles TASK_COMPLETE event for decomposer", async () => {
     const deps = makeMockEngineDeps();
     const engine = new WorkflowEngine(deps as any);
 
@@ -71,15 +71,15 @@ describe("WorkflowEngine", () => {
       workflowSnapshot: [],
     });
 
-    // Set planner task to running (simulating CONTAINER_READY)
+    // Set decomposer task to running (simulating CONTAINER_READY)
     const state = engine.getPlanState("plan-1")!;
-    const plannerTask = state.tasks.get("planner")!;
-    state.tasks.set("planner", { ...plannerTask, status: "running" });
+    const decomposerTask = state.tasks.get("decomposer")!;
+    state.tasks.set("decomposer", { ...decomposerTask, status: "running" });
 
     await engine.processEvent({
       type: "TASK_COMPLETE",
       planId: "plan-1",
-      taskId: "planner",
+      taskId: "decomposer",
       payload: { tasks: [] },
     });
 
@@ -163,7 +163,7 @@ describe("Regression: known bugs", () => {
 
     // Try to process more events — should be ignored
     await engine.processEvent({
-      type: "TASK_COMPLETE", planId: "plan-1", taskId: "planner", payload: {},
+      type: "TASK_COMPLETE", planId: "plan-1", taskId: "decomposer", payload: {},
     });
 
     expect(engine.getPlanState("plan-1")!.phase).toBe("complete");
@@ -183,13 +183,13 @@ describe("Regression: known bugs", () => {
       type: "TASK_COMPLETE", planId: "plan-1", taskId: "nonexistent", payload: {},
     });
 
-    // Plan should still be in planning (unchanged)
-    expect(engine.getPlanState("plan-1")!.phase).toBe("planning");
+    // Plan should still be in decomposing (unchanged)
+    expect(engine.getPlanState("plan-1")!.phase).toBe("decomposing");
   });
 });
 
 describe("Scenario: plan creation through approval", () => {
-  it("create -> planner completes -> reviewing -> approve -> executing", async () => {
+  it("create -> decomposer completes -> reviewing -> approve -> executing", async () => {
     const deps = makeMockEngineDeps();
     const engine = new WorkflowEngine(deps as any);
 
@@ -203,15 +203,15 @@ describe("Scenario: plan creation through approval", () => {
           is_conditional: false, condition: null },
       ],
     });
-    expect(engine.getPlanState("plan-1")!.phase).toBe("planning");
+    expect(engine.getPlanState("plan-1")!.phase).toBe("decomposing");
 
-    // 2. Simulate planner running and completing
+    // 2. Simulate decomposer running and completing
     const state = engine.getPlanState("plan-1")!;
-    const plannerTask = state.tasks.get("planner")!;
-    state.tasks.set("planner", { ...plannerTask, status: "running" });
+    const decomposerTask = state.tasks.get("decomposer")!;
+    state.tasks.set("decomposer", { ...decomposerTask, status: "running" });
 
     await engine.processEvent({
-      type: "TASK_COMPLETE", planId: "plan-1", taskId: "planner", payload: {},
+      type: "TASK_COMPLETE", planId: "plan-1", taskId: "decomposer", payload: {},
     });
     expect(engine.getPlanState("plan-1")!.phase).toBe("reviewing");
 
@@ -221,8 +221,8 @@ describe("Scenario: plan creation through approval", () => {
   });
 });
 
-describe("Scenario: planner produces tasks → auto-approve → executing", () => {
-  it("full flow: create → planner with tasks → auto-approve → tasks spawned", async () => {
+describe("Scenario: decomposer produces tasks → auto-approve → executing", () => {
+  it("full flow: create → decomposer with tasks → auto-approve → tasks spawned", async () => {
     const deps = makeMockEngineDeps();
     const engine = new WorkflowEngine(deps as any);
 
@@ -238,17 +238,17 @@ describe("Scenario: planner produces tasks → auto-approve → executing", () =
           is_conditional: false, condition: null },
       ],
     });
-    expect(engine.getPlanState("plan-1")!.phase).toBe("planning");
+    expect(engine.getPlanState("plan-1")!.phase).toBe("decomposing");
 
-    // 2. Simulate planner running
+    // 2. Simulate decomposer running
     const state = engine.getPlanState("plan-1")!;
-    const plannerTask = state.tasks.get("planner")!;
-    state.tasks.set("planner", { ...plannerTask, status: "running", containerId: "ao--plan-1--planner" });
+    const decomposerTask = state.tasks.get("decomposer")!;
+    state.tasks.set("decomposer", { ...decomposerTask, status: "running", containerId: "ao--plan-1--decomposer" });
 
-    // 3. Planner completes with task graph
+    // 3. Decomposer completes with task graph
     const spawnCallsBefore = deps.spawner.spawn.mock.calls.length;
     await engine.processEvent({
-      type: "TASK_COMPLETE", planId: "plan-1", taskId: "planner",
+      type: "TASK_COMPLETE", planId: "plan-1", taskId: "decomposer",
       payload: {
         tasks: [
           { id: "0.1", title: "Build API", description: "Implement endpoints",
@@ -263,12 +263,12 @@ describe("Scenario: planner produces tasks → auto-approve → executing", () =
 
     // Should have auto-approved and started executing
     expect(engine.getPlanState("plan-1")!.phase).toBe("executing");
-    expect(engine.getPlanState("plan-1")!.tasks.size).toBe(3); // planner + 2 tasks
+    expect(engine.getPlanState("plan-1")!.tasks.size).toBe(3); // decomposer + 2 tasks
     // Tasks go spawning → running because CONTAINER_READY fires synchronously after spawn
     expect(engine.getPlanState("plan-1")!.tasks.get("0.1")!.status).toBe("running");
     expect(engine.getPlanState("plan-1")!.tasks.get("0.2")!.status).toBe("running");
 
-    // Two task containers should have been spawned (not counting the planner)
+    // Two task containers should have been spawned (not counting the decomposer)
     const newSpawnCalls = deps.spawner.spawn.mock.calls.length - spawnCallsBefore;
     expect(newSpawnCalls).toBe(2);
   });
@@ -284,13 +284,13 @@ describe("Scenario: plan cancellation", () => {
       workflowId: "std", workflowVersionId: "v1", workflowSnapshot: [],
     });
 
-    // Set planner to running with a container
+    // Set decomposer to running with a container
     const state = engine.getPlanState("plan-1")!;
-    const plannerTask = state.tasks.get("planner")!;
-    state.tasks.set("planner", {
-      ...plannerTask,
+    const decomposerTask = state.tasks.get("decomposer")!;
+    state.tasks.set("decomposer", {
+      ...decomposerTask,
       status: "running",
-      containerId: "ao--plan-1--planner",
+      containerId: "ao--plan-1--decomposer",
     });
 
     await engine.processEvent({ type: "PLAN_CANCELLED", planId: "plan-1" });
