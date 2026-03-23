@@ -96,7 +96,7 @@ function spawnEffectsForTasks(
         model: task.model,
         skill: task.skill,
         dockerImage: task.dockerImage,
-        environment: {},
+        environment: { AO_PLAN_ID: state.planId, AO_TASK_ID: task.id },
       },
     });
   }
@@ -341,7 +341,7 @@ export function transition(
             model: "opus",
             skill: "planner",
             dockerImage: "",
-            environment: {},
+            environment: { AO_PLAN_ID: event.planId, AO_TASK_ID: plannerTaskId },
           },
         },
       ];
