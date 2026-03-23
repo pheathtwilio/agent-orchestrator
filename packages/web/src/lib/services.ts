@@ -112,12 +112,16 @@ async function initServices(): Promise<Services> {
         const session = await sessionManager.spawn({
           projectId: spawnConfig.projectId,
           prompt: spawnConfig.prompt,
-          branch: spawnConfig.branch,
+          branch: spawnConfig.branch || undefined,
           runtimeConfig: {
             containerName: spawnConfig.containerName,
-            image: spawnConfig.dockerImage,
+            ...(spawnConfig.dockerImage ? { image: spawnConfig.dockerImage } : {}),
           },
-          environment: spawnConfig.environment,
+          environment: {
+            ...spawnConfig.environment,
+            ...(spawnConfig.skill ? { AO_SKILL: spawnConfig.skill } : {}),
+            ...(spawnConfig.model ? { AO_MODEL: spawnConfig.model } : {}),
+          },
           metadata: { engineManaged: "true" },
         });
         containerToSession.set(spawnConfig.containerName, session.id);
