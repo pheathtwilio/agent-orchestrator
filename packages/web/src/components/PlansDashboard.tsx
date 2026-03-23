@@ -415,7 +415,7 @@ export function PlansDashboard() {
                       className="w-full text-left p-3"
                     >
                       <div className="flex justify-between items-start mb-2">
-                        <span className="text-xs font-medium text-zinc-200 leading-tight">
+                        <span className="text-xs font-medium text-zinc-200 leading-tight line-clamp-2">
                           {plan.title}
                         </span>
                         <span className="text-[10px] text-zinc-500 ml-2 whitespace-nowrap">

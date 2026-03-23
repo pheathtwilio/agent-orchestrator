@@ -1,6 +1,7 @@
 import {
   createMessageBus,
   createTaskStore,
+  createEngineStore,
   type BusMessage,
   type TaskGraph,
 } from "@composio/ao-message-bus";
@@ -9,6 +10,56 @@ import { getPlanState } from "@/lib/engine-bridge";
 export const dynamic = "force-dynamic";
 
 const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379";
+
+/** Try legacy store first, then engine store. Returns a TaskGraph-compatible object. */
+async function resolveGraph(
+  taskStore: ReturnType<typeof createTaskStore>,
+  engineStore: ReturnType<typeof createEngineStore>,
+  planId: string,
+): Promise<TaskGraph | null> {
+  const graph = await taskStore.getGraph(planId);
+  if (graph) return graph;
+
+  const planData = await engineStore.getPlan(planId);
+  if (!planData) return null;
+
+  const tasks = await engineStore.getAllTasks(planId);
+  let workflowSnapshot: unknown[] | undefined;
+  try {
+    workflowSnapshot = planData.workflowSnapshot ? JSON.parse(planData.workflowSnapshot) : undefined;
+  } catch { /* ignore */ }
+
+  const nodes = Object.entries(tasks).map(([taskId, json]) => {
+    const task = JSON.parse(json);
+    return {
+      id: taskId,
+      title: task.title || taskId,
+      description: task.description || "",
+      status: task.status === "running" ? "in_progress" : task.status === "spawning" ? "assigned" : task.status || "pending",
+      skill: task.skill || "",
+      model: task.model || "",
+      assignedTo: task.containerId || null,
+      branch: task.branch || null,
+      dependsOn: task.dependsOn || [],
+      fileBoundary: task.fileBoundary || [],
+      acceptanceCriteria: task.acceptanceCriteria || [],
+      result: task.result || null,
+      createdAt: planData.createdAt,
+      updatedAt: planData.updatedAt,
+    };
+  });
+
+  return {
+    id: planId,
+    featureId: planId,
+    title: planData.featureDescription,
+    nodes,
+    createdAt: planData.createdAt,
+    updatedAt: planData.updatedAt,
+    workflowSnapshot,
+    currentStepIndex: planData.currentStepIndex,
+  } as TaskGraph;
+}
 
 /**
  * GET /api/plans/:id/events — SSE stream for real-time plan updates.
@@ -31,6 +82,7 @@ export async function GET(
 
   const encoder = new TextEncoder();
   const taskStore = createTaskStore(REDIS_URL);
+  const engineStore = createEngineStore(REDIS_URL);
   const messageBus = createMessageBus(REDIS_URL);
 
   // Track subscribed output sessions for cleanup
@@ -117,8 +169,8 @@ export async function GET(
   const stream = new ReadableStream({
     start(controller) {
       void (async () => {
-        // Initial snapshot
-        const graph = await taskStore.getGraph(planId);
+        // Initial snapshot — try legacy store, then engine store
+        const graph = await resolveGraph(taskStore, engineStore, planId);
         if (!graph) {
           send(controller, "error", { error: "Plan not found" });
           controller.close();
@@ -158,7 +210,7 @@ export async function GET(
           void (async () => {
             if (closed) return;
             try {
-              const currentGraph = await taskStore.getGraph(planId);
+              const currentGraph = await resolveGraph(taskStore, engineStore, planId);
               if (!currentGraph) return;
 
               // Send updated snapshot
@@ -213,6 +265,7 @@ export async function GET(
       outputSessions.clear();
       await messageBus.disconnect().catch(() => {});
       await taskStore.disconnect().catch(() => {});
+      await engineStore.disconnect().catch(() => {});
     })();
   }
 
