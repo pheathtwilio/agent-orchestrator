@@ -265,3 +265,41 @@ export interface SummaryStore {
   /** Graceful shutdown */
   disconnect(): Promise<void>;
 }
+
+// ============================================================================
+// ENGINE STORE (HASH-per-task atomic persistence)
+// ============================================================================
+
+export interface EnginePlanData {
+  phase: string;
+  currentStepIndex: number;
+  workflowId: string;
+  workflowVersionId: string;
+  workflowSnapshot: string; // JSON
+  projectId: string;
+  featureDescription: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface EngineStore {
+  createPlan(planId: string, data: EnginePlanData): Promise<void>;
+  getPlan(planId: string): Promise<EnginePlanData | null>;
+  atomicUpdate(planId: string, ops: AtomicOp[]): Promise<void>;
+  getTask(planId: string, taskId: string): Promise<string | null>;
+  getAllTasks(planId: string): Promise<Record<string, string>>;
+  getActivePlanIds(): Promise<string[]>;
+  deactivatePlan(planId: string): Promise<void>;
+  registerContainer(containerName: string, planId: string, taskId: string): Promise<void>;
+  lookupContainer(containerName: string): Promise<{ planId: string; taskId: string } | null>;
+  removeContainer(containerName: string): Promise<void>;
+  updateHeartbeat(planId: string, taskId: string, timestamp: number): Promise<void>;
+  getHeartbeats(): Promise<Record<string, number>>;
+  disconnect(): Promise<void>;
+}
+
+export type AtomicOp =
+  | { type: "SET_TASK"; taskId: string; data: string }
+  | { type: "SET_PLAN_FIELD"; field: string; value: string }
+  | { type: "ADD_CLEANUP"; planId: string; resource: string }
+  | { type: "REMOVE_CLEANUP"; planId: string; resource: string };
